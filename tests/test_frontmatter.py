@@ -7,7 +7,16 @@ from pathlib import Path
 
 import yaml
 
-from docx2md.processors.frontmatter import generate_yaml_frontmatter
+from docx2md.processors.frontmatter import (
+    _flip_author_name,
+    _insert_newpage_before_sections,
+    generate_yaml_frontmatter,
+)
+
+
+def _parse_yaml(fm_str: str) -> dict:
+    """Parse the YAML block between --- delimiters."""
+    return yaml.safe_load(fm_str.strip("---\n")) or {}
 
 
 class TestGenerateYamlFrontmatter(unittest.TestCase):
@@ -26,18 +35,18 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
 
     def test_title_from_doc_properties(self):
         fm_str, _ = self._gen(doc_props={"title": "My Title"})
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["title"], "My Title")
 
     def test_title_from_body_bold(self):
         content = "**Introduction to Topology**\n\nBody text."
         fm_str, _ = self._gen(content=content)
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["title"], "Introduction to Topology")
 
     def test_title_fallback_from_filename(self):
         fm_str, _ = self._gen(path=Path("my_great_document.docx"), content="Body.")
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertIn("My Great Document", fm["title"])
 
     # ------------------------------------------------------------------
@@ -46,15 +55,34 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
 
     def test_author_from_doc_properties(self):
         fm_str, _ = self._gen(doc_props={"author": "Jane Doe"})
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["author"], "Jane Doe")
 
     def test_author_from_body_name_email(self):
         content = "**Title**\n\nJane Doe -- <jane@example.com>\n\nBody."
         fm_str, _ = self._gen(content=content)
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["author"], "Jane Doe")
         self.assertEqual(fm["email"], "jane@example.com")
+
+    # ------------------------------------------------------------------
+    # Author name flipping
+    # ------------------------------------------------------------------
+
+    def test_flip_last_first_author(self):
+        fm_str, _ = self._gen(doc_props={"author": "Doe, Jane"})
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["author"], "Jane Doe")
+
+    def test_flip_last_first_middle_author(self):
+        fm_str, _ = self._gen(doc_props={"author": "Doe, Jane Marie"})
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["author"], "Jane Marie Doe")
+
+    def test_no_flip_normal_author(self):
+        fm_str, _ = self._gen(doc_props={"author": "Jane Doe"})
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["author"], "Jane Doe")
 
     # ------------------------------------------------------------------
     # Subtitle
@@ -62,13 +90,13 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
 
     def test_subtitle_from_doc_properties(self):
         fm_str, _ = self._gen(doc_props={"subject": "A Subtitle"})
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["subtitle"], "A Subtitle")
 
     def test_subtitle_from_body_italic(self):
         content = "**Title**\n\n*An Italic Subtitle*\n\nBody."
         fm_str, _ = self._gen(content=content)
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertEqual(fm["subtitle"], "An Italic Subtitle")
 
     # ------------------------------------------------------------------
@@ -77,10 +105,70 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
 
     def test_mdtexpdf_defaults_present(self):
         fm_str, _ = self._gen(doc_props={"title": "Test"})
-        fm = yaml.safe_load(fm_str.strip("---\n"))
+        fm = _parse_yaml(fm_str)
         self.assertIn("format", fm)
         self.assertIn("toc", fm)
         self.assertIn("no_numbers", fm)
+
+    def test_default_format_is_book(self):
+        fm_str, _ = self._gen(doc_props={"title": "Test"})
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["format"], "book")
+
+    def test_active_defaults(self):
+        """Verify that key fields are active (uncommented) by default."""
+        fm_str, _ = self._gen(doc_props={"title": "Test", "author": "Author"})
+        fm = _parse_yaml(fm_str)
+        self.assertTrue(fm["toc"])
+        self.assertTrue(fm["no_numbers"])
+        self.assertTrue(fm["pageof"])
+        self.assertTrue(fm["date_footer"])
+        self.assertTrue(fm["copyright_page"])
+        self.assertTrue(fm["chapters_on_recto"])
+        self.assertTrue(fm["drop_caps"])
+        self.assertEqual(fm["header_footer_policy"], "all")
+
+    def test_commented_fields_not_in_parsed_yaml(self):
+        """Commented-out fields should not appear in parsed YAML."""
+        fm_str, _ = self._gen(doc_props={"title": "Test"})
+        fm = _parse_yaml(fm_str)
+        self.assertNotIn("dedication", fm)
+        self.assertNotIn("epigraph", fm)
+        self.assertNotIn("cover_image", fm)
+        self.assertNotIn("back_cover_image", fm)
+        self.assertNotIn("publisher", fm)
+        self.assertNotIn("trim_size", fm)
+        self.assertNotIn("acknowledgments", fm)
+
+    # ------------------------------------------------------------------
+    # Section headers present in raw output
+    # ------------------------------------------------------------------
+
+    def test_section_headers_present(self):
+        fm_str, _ = self._gen(doc_props={"title": "Test"})
+        self.assertIn("# === COMMON METADATA ===", fm_str)
+        self.assertIn("# === PDF SETTINGS ===", fm_str)
+        self.assertIn("# === PROFESSIONAL BOOK FEATURES ===", fm_str)
+        self.assertIn("# === COVER SYSTEM ===", fm_str)
+        self.assertIn("# === PRINT FORMAT ===", fm_str)
+        self.assertIn("# === ACKNOWLEDGMENTS & ABOUT THE AUTHOR ===", fm_str)
+        self.assertIn("# === LATEX PACKAGES", fm_str)
+
+    # ------------------------------------------------------------------
+    # Config overrides activate commented fields
+    # ------------------------------------------------------------------
+
+    def test_override_activates_dedication(self):
+        config = {"yaml_frontmatter": {"mdtexpdf": {"dedication": "To my cat."}}}
+        fm_str, _ = self._gen(doc_props={"title": "Test"}, config=config)
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["dedication"], "To my cat.")
+
+    def test_override_changes_format(self):
+        config = {"yaml_frontmatter": {"mdtexpdf": {"format": "article"}}}
+        fm_str, _ = self._gen(doc_props={"title": "Test"}, config=config)
+        fm = _parse_yaml(fm_str)
+        self.assertEqual(fm["format"], "article")
 
     # ------------------------------------------------------------------
     # Re-run guard (already has frontmatter)
@@ -120,6 +208,52 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
         )
         self.assertEqual(fm_str, "")
         self.assertEqual(content, "Body.")
+
+
+class TestFlipAuthorName(unittest.TestCase):
+
+    def test_last_first(self):
+        self.assertEqual(_flip_author_name("Doe, Jane"), "Jane Doe")
+
+    def test_last_first_middle(self):
+        self.assertEqual(_flip_author_name("Doe, Jane Marie"), "Jane Marie Doe")
+
+    def test_no_comma(self):
+        self.assertEqual(_flip_author_name("Jane Doe"), "Jane Doe")
+
+    def test_empty(self):
+        self.assertEqual(_flip_author_name(""), "")
+
+    def test_trailing_comma_only(self):
+        self.assertEqual(_flip_author_name("Name,"), "Name,")
+
+
+class TestInsertNewpage(unittest.TestCase):
+
+    def test_newpage_before_references(self):
+        content = "Last paragraph.\n\n# References\n\nRef 1."
+        result = _insert_newpage_before_sections(content)
+        self.assertIn("\\newpage\n\n# References", result)
+
+    def test_newpage_before_index(self):
+        content = "Some text.\n\n## Index\n\nA, B, C."
+        result = _insert_newpage_before_sections(content)
+        self.assertIn("\\newpage\n\n## Index", result)
+
+    def test_newpage_before_bibliography(self):
+        content = "End.\n\n# Bibliography\n\n[1] Book."
+        result = _insert_newpage_before_sections(content)
+        self.assertIn("\\newpage\n\n# Bibliography", result)
+
+    def test_no_newpage_for_normal_heading(self):
+        content = "Text.\n\n# Chapter 1\n\nIntro."
+        result = _insert_newpage_before_sections(content)
+        self.assertNotIn("\\newpage", result)
+
+    def test_no_double_newpage(self):
+        content = "Text.\n\n# References\n\nRefs."
+        result = _insert_newpage_before_sections(content)
+        self.assertEqual(result.count("\\newpage"), 1)
 
 
 if __name__ == "__main__":

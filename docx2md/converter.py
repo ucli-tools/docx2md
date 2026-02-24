@@ -8,6 +8,7 @@ Pipeline order:
   1. Extract DOCX metadata (python-docx)
   2. pandoc: docx → raw markdown  +  --extract-media=./img
   3. WordCleanupProcessor   — remove TOC, heading markup, heading IDs, fix image paths
+  3b. FrontMatterStructureProcessor — detect body front matter, wrap with headings
   4. UnicodeFixProcessor    — replace Unicode math chars with LaTeX
   5. FigureProcessor        — fix double figure captions
   6. EquationFixProcessor   — fix garbled OMML equation patterns
@@ -126,6 +127,15 @@ def convert_docx_to_markdown(
     if processing.get("cleanup", True):
         proc = WordCleanupProcessor(config, output_dir=output_path.parent)
         markdown_content = proc.process(markdown_content)
+
+    # Step 3b: Detect and structure body front matter (dedication, copyright, title repeats)
+    if processing.get("structure_front_matter", True):
+        from docx2md.processors.front_matter_structure import FrontMatterStructureProcessor
+        proc = FrontMatterStructureProcessor(config)
+        markdown_content = proc.process(
+            markdown_content,
+            doc_properties=doc_content.get("properties", {}),
+        )
 
     # Step 4: Unicode → LaTeX replacement
     if processing.get("fix_unicode", True):

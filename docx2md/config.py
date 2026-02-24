@@ -46,6 +46,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "fix_unicode": True,
         "fix_equations": True,
         "generate_frontmatter": True,
+        "structure_front_matter": True,
     },
     "cleanup": {
         "strip_triple_dollar": True,
@@ -77,12 +78,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "strip_body_title_block": True, # remove title/author lines from body after extraction
         "default_author": "",
         "mdtexpdf": {
-            "format": "article",
+            "format": "book",
             "toc": True,
-            "toc-depth": 2,
             "no_numbers": True,
             "header_footer_policy": "all",
             "pageof": True,
+            "date_footer": True,
+            "copyright_page": True,
+            "chapters_on_recto": True,
+            "drop_caps": True,
         },
     },
 }

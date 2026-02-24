@@ -105,6 +105,34 @@ _P_MATH_THEN_SUPER = re.compile(
     r'\^([^^\n{}'r']+)\^',   # group 2: pandoc superscript (no braces)
 )
 
+# Pattern I – missing space after closing inline math: $...$word → $...$ word
+# Pandoc sometimes glues closing $ to the next word when Word had no separator.
+# The [^ $\n] after opening $ ensures we match real inline math (no space after $)
+# and don't span from one closing $ to the next opening $ across normal text.
+_P_MATH_GLUED_AFTER = re.compile(
+    r'(\$[^ $\n][^$\n]*\$)([a-zA-Z])',
+)
+
+# Pattern J – Word text label glued to inline math of the same word:
+#   "unitary$Unitary$" → "unitary" (remove duplicate math label)
+# Word stores both plain text and an equation label for the same word.
+_P_WORD_TEXT_LABEL = re.compile(
+    r'([a-zA-Z]{2,})\$([a-zA-Z]+)\$',
+)
+
+# Pattern K – broken inline math with space after opening $: $ n → $n
+# Pandoc requires no space after opening $ for inline math recognition.
+# Various pipeline interactions (math extraction _fix_adjacent_inline,
+# pattern D rewrites) can produce $ followed by a space.  Fix by removing
+# the space.  Works for both single-line ($n$) and multiline (matrices).
+# Guard: negative lookbehind excludes CLOSING $ (preceded by math content:
+# letters, digits, }, ), ], \) and $$ display math (preceded by $).
+# Opening $ is preceded by whitespace, formatting chars (*_), punctuation,
+# or start-of-line — none of which are in the exclusion set.
+_P_SPACE_AFTER_OPEN_DOLLAR = re.compile(
+    r'(?<![a-zA-Z0-9})\]\\$])\$ ([a-zA-Z\\])',
+)
+
 # ---------------------------------------------------------------------------
 # Matches Word-generated TOC headings (with optional class attributes)
 _TOC_HEADING = re.compile(
@@ -114,6 +142,12 @@ _TOC_HEADING = re.compile(
 
 # Matches heading lines (one or more # followed by space and content)
 _HEADING_LINE = re.compile(r'^(#+)\s+(.+)$')
+
+# Empty headings: lines with only # characters and optional whitespace
+_EMPTY_HEADING = re.compile(r'^#+\s*$', re.MULTILINE)
+
+# Empty bracket artifacts: standalone [] on a line (from empty Word links/images)
+_EMPTY_BRACKETS = re.compile(r'^\[\]\s*$', re.MULTILINE)
 
 # Matches {#word-id} optionally followed by class attributes like .unnumbered
 _HEADING_ID = re.compile(r'\{#[a-zA-Z0-9_-]+([^}]*)\}')
@@ -165,6 +199,10 @@ class WordCleanupProcessor(BaseProcessor):
             content = _IMAGE_SIZE_ATTRS.sub(r'\1', content)
         if self.fix_image_paths:
             content = _fix_image_paths(content, self.output_dir)
+        # Strip empty headings (## with no text) — Word section break artifacts
+        content = _EMPTY_HEADING.sub('', content)
+        # Strip empty bracket artifacts [] on standalone lines
+        content = _EMPTY_BRACKETS.sub('', content)
         return content
 
 
@@ -308,6 +346,19 @@ def _strip_triple_dollar(content: str) -> str:
     # Pattern H: merge $X$^Y^ → $X^{Y}$ (pandoc superscript after inline math)
     content = _P_MATH_THEN_SUPER.sub(r'$\1^{\2}$', content)
 
+    # Pattern J: word$Word$ duplicate text label → word (remove math duplicate)
+    content = _P_WORD_TEXT_LABEL.sub(
+        lambda m: m.group(1) if m.group(1).lower() == m.group(2).lower()
+        else m.group(0),
+        content,
+    )
+
+    # Pattern I: $...$word → $...$ word (ensure space after closing inline math)
+    content = _P_MATH_GLUED_AFTER.sub(r'\1 \2', content)
+
+    # Pattern K: $ n$ → $n$ (fix space after opening $ that breaks inline math)
+    content = _P_SPACE_AFTER_OPEN_DOLLAR.sub(r'$\1', content)
+
     return content
 
 
@@ -394,6 +445,9 @@ def final_sanitize(content: str) -> str:
 
     # Bare LaTeX command + pandoc superscript: \theta^n^ → $\theta^{n}$
     content = _P_BARE_CMD_SUPER.sub(r'$\1^{\2}$', content)
+
+    # Pattern K: $ n$ → $n$ (fix space after opening $ — final safety net)
+    content = _P_SPACE_AFTER_OPEN_DOLLAR.sub(r'$\1', content)
 
     return content
 

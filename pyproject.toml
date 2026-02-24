@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Office/Business :: Office Suites",
 ]
 keywords = ["markdown", "latex", "word", "docx", "conversion", "math", "equations"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "python-docx==1.0.0",
     "pypandoc>=1.11",
