@@ -160,6 +160,15 @@ _IMAGE_SIZE_ATTRS = re.compile(
 # Image markdown reference: ![alt](path)
 _IMAGE_REF = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
 
+# Pattern M – Word AI-generated image descriptions:
+#   "A black and white drawing of a frog Description automatically generated
+#    with medium confidence"
+# These are unreliable (often wrong) and should be stripped entirely.
+_P_AI_IMAGE_DESC = re.compile(
+    r'^.*?Description automatically generated.*$',
+    re.IGNORECASE,
+)
+
 
 class WordCleanupProcessor(BaseProcessor):
     """
@@ -372,6 +381,9 @@ def _sanitize_image_alt(content: str) -> str:
     def _fix_alt(m: re.Match) -> str:
         alt = m.group(1)
         path = m.group(2)
+
+        # Pattern M: strip Word AI-generated image descriptions (unreliable)
+        alt = _P_AI_IMAGE_DESC.sub('', alt)
 
         # Convert \[...\] and \(...\) to $...$ first
         alt = re.sub(r'\\\[', '$', alt)
