@@ -228,6 +228,20 @@ def convert_docx_to_markdown(
         )
         markdown_content = frontmatter + markdown_content
 
+        # Create metadata.yaml on first run (never overwrite user edits).
+        # mdtexpdf auto-detects this file and uses it instead of embedded YAML.
+        metadata_yaml_path = output_path.parent / "metadata.yaml"
+        if not metadata_yaml_path.exists():
+            yaml_lines = frontmatter.strip().split('\n')
+            # Strip --- delimiters for standalone YAML file
+            if yaml_lines and yaml_lines[0].strip() == '---':
+                yaml_lines = yaml_lines[1:]
+            if yaml_lines and yaml_lines[-1].strip() == '---':
+                yaml_lines = yaml_lines[:-1]
+            with open(metadata_yaml_path, "w", encoding="utf-8") as f:
+                f.write('\n'.join(yaml_lines) + '\n')
+            logger.info(f"Created metadata.yaml at {metadata_yaml_path}")
+
     # Write final output
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(markdown_content)
