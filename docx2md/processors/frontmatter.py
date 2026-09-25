@@ -123,6 +123,37 @@ def _docx_fonts(docx_path: Path) -> Tuple[str, str]:
     return body, heading
 
 
+# Serif faces with full (polytonic) Greek, for text Greek the main font lacks
+_GREEK_FALLBACKS = ('Noto Serif', 'Liberation Serif', 'DejaVu Serif', 'FreeSerif')
+_RE_GREEK = re.compile('[\u0370-\u03ff\u1f00-\u1fff]')
+
+
+def _font_covers(font: str, chars: Set[str]) -> Optional[bool]:
+    """Whether fontconfig finds every one of *chars* in *font*; None if it
+    cannot tell."""
+    charset = ' '.join(f'{ord(c):x}' for c in sorted(chars))
+    try:
+        out = subprocess.run(
+            ['fc-list', f':family={font}:charset={charset}', 'family'],
+            capture_output=True, text=True, timeout=30,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return bool(out.strip())
+
+
+def _greek_fallback(mainfont: str, content: str) -> str:
+    """A Greek-capable font when the text has Greek that *mainfont* lacks."""
+    text = re.sub(r'\$[^$]*\$', ' ', content)
+    greek = set(_RE_GREEK.findall(text))
+    if not greek or _font_covers(mainfont, greek) is not False:
+        return ''
+    for font in _GREEK_FALLBACKS:
+        if _font_covers(font, greek):
+            return font
+    return ''
+
+
 def _resolve_font(name: str, installed: Set[str]) -> str:
     """The font itself if installed, else its metric twin if installed."""
     if not name:
@@ -251,6 +282,10 @@ def generate_yaml_frontmatter(
         mainfont = _resolve_font(body, installed)
         if mainfont and 'mainfont' not in overrides:
             overrides['mainfont'] = mainfont
+            # Caladea, Cambria's twin, has no Greek, where Cambria does
+            greek = _greek_fallback(mainfont, content)
+            if greek and 'greekfont' not in overrides:
+                overrides['greekfont'] = greek
         if heading in _SANS_FONTS and heading != body:
             sansfont = _resolve_font(heading, installed)
             if sansfont and 'sansfont' not in overrides:
@@ -370,6 +405,7 @@ def _build_yaml_template(
     field('mainfont', 'DejaVu Serif')
     field('sansfont', 'DejaVu Sans')
     field('headings_sans', True)
+    field('greekfont', 'Noto Serif')
     lines.append('')
 
     # === PROFESSIONAL BOOK FEATURES ===

@@ -323,3 +323,12 @@ class TestDocxFonts(unittest.TestCase):
         self.assertEqual(parsed["mainfont"], "Caladea")
         self.assertEqual(parsed["sansfont"], "Carlito")
         self.assertIs(parsed["headings_sans"], True)
+
+    def test_greek_fallback_when_main_font_lacks_greek(self):
+        from unittest import mock
+        from docx2md.processors import frontmatter
+        covers = lambda font, chars: font != "Caladea"
+        with mock.patch.object(frontmatter, "_font_covers", side_effect=covers):
+            self.assertEqual(frontmatter._greek_fallback("Caladea", "A Ἰσόν phrase."), "Noto Serif")
+            self.assertEqual(frontmatter._greek_fallback("Caladea", "Only $\\sigma$ and $σ$."), "")
+            self.assertEqual(frontmatter._greek_fallback("Noto Serif", "A Ἰσόν phrase."), "")
