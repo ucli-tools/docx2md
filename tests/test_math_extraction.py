@@ -446,6 +446,12 @@ class TestStripDelimiters:
 class TestSplice:
     """Tests for MathExtractor._splice."""
 
+    def test_splice_numbered_inline_equation_displayed(self, extractor):
+        equations = [{"idx": 0, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_0000@@"}]
+        md = "we find @@MATH_INLINE_0000@@which is equivalent to"
+        result = extractor._splice(md, {0: "x = 1 \\tag{1.4.188}"}, equations)
+        assert "\n$$\nx = 1 \\tag{1.4.188}\n$$\n" in result
+
     def test_splice_inline(self, extractor):
         equations = [{"idx": 0, "kind": "inline", "placeholder": "@@MATH_INLINE_0000@@", "xml": ""}]
         eq_latex = {0: "x+y"}

@@ -841,7 +841,12 @@ class MathExtractor:
                 markdown = markdown.replace(placeholder, f"${body}$")
                 continue
 
-            if eq["kind"] == "display":
+            kind = eq["kind"]
+            if kind == "inline" and self._RE_TAG.search(latex):
+                # A numbered equation is displayed, wherever Word put it
+                kind = "display"
+
+            if kind == "display":
                 # Detect QED-only equations (just \square or \blacksquare)
                 stripped = self._strip_array_wrapper(latex).strip()
                 if stripped in (r'\square', r'\blacksquare'):
