@@ -429,6 +429,30 @@ _P_BARE_CMD_SUPER = re.compile(
 )
 
 
+# A bare web address in the text. Not already a link target ](...), an
+# autolink <...>, or inside quotes.
+_P_BARE_URL = re.compile(r'(?<![<(\["\'/\w])(https?://[^\s<>()\[\]*"]+)')
+
+
+def _autolink_bare_urls(content: str) -> str:
+    """Wrap bare web addresses as <autolinks>.
+
+    As plain text a long address cannot break across a line, so the line
+    before it is spaced out or the address runs into the margin; as an
+    autolink it is set as a URL that breaks at / and ., and is a link.
+    """
+    def _wrap(m: re.Match) -> str:
+        url = m.group(1)
+        trail = ''
+        while url and url[-1] in '.,;:':
+            trail = url[-1] + trail
+            url = url[:-1]
+        # markdown escapes mean nothing inside an autolink
+        url = re.sub(r'\\([~_#&%])', r'\1', url)
+        return f'<{url}>{trail}'
+    return _P_BARE_URL.sub(_wrap, content)
+
+
 def final_sanitize(content: str) -> str:
     """
     Final-pass LaTeX sanitization.
@@ -442,6 +466,9 @@ def final_sanitize(content: str) -> str:
     # causes (e.g. _P_BARE_CMD_SUPER matching LaTeX ^{} syntax) are now fixed
     # with brace-exclusion in the regexes.
     # content = _strip_dollars_in_display_math(content)
+
+    # Bare web addresses become autolinks, which can break across a line
+    content = _autolink_bare_urls(content)
 
     # Pattern E: double subscripts (re-run in case fix_delimiters created new ones)
     content = _P_DOUBLE_SUBSCRIPT.sub(r'\1}{}\2', content)

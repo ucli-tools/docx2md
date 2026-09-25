@@ -138,3 +138,22 @@ class TestWordCleanupProcessor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAutolinkBareUrls:
+    """Bare web addresses become autolinks that can break across a line."""
+
+    def test_bare_url_wrapped_trailing_punctuation_kept_outside(self):
+        from docx2md.processors.cleanup import _autolink_bare_urls
+        assert _autolink_bare_urls("at http://www.geogebra.com, which") == \
+            "at <http://www.geogebra.com>, which"
+
+    def test_escapes_removed_inside_autolink(self):
+        from docx2md.processors.cleanup import _autolink_bare_urls
+        assert _autolink_bare_urls("see http://x.edu/\\~haber/a.pdf*") == \
+            "see <http://x.edu/~haber/a.pdf>*"
+
+    def test_existing_links_untouched(self):
+        from docx2md.processors.cleanup import _autolink_bare_urls
+        text = "a [site](https://a.b/c) and <https://x.y> and ![i](./img/a.png)"
+        assert _autolink_bare_urls(text) == text
