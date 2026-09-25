@@ -137,6 +137,13 @@ class MathExtractor:
             for child in parent:
                 parent_map[child] = parent
 
+        # Math inside a field instruction (an XE index entry, a TC entry) is
+        # part of the hidden field code, not of the text: drop it
+        for math_el in self._math_in_field_instructions(root, parent_map):
+            parent = parent_map.get(math_el)
+            if parent is not None:
+                parent.remove(math_el)
+
         equations: List[Dict[str, Any]] = []
         idx = 0
 
@@ -204,6 +211,41 @@ class MathExtractor:
         rezip_docx(unpack_dir, sanitized_path)
 
         return sanitized_path, equations
+
+    @staticmethod
+    def _math_in_field_instructions(
+        root: ET.Element, parent_map: Dict[ET.Element, ET.Element]
+    ) -> List[ET.Element]:
+        """Math elements between a field's begin and separate (or end) marks.
+
+        Walks the document in order, tracking nested complex fields; returns
+        the outermost math elements met while inside an instruction.
+        """
+        found: List[ET.Element] = []
+        stack: List[str] = []
+        for el in root.iter():
+            if el.tag == f"{_NS_W}fldChar":
+                kind = el.get(f"{_NS_W}fldCharType")
+                if kind == "begin":
+                    stack.append("instruction")
+                elif kind == "separate" and stack:
+                    stack[-1] = "result"
+                elif kind == "end" and stack:
+                    stack.pop()
+            elif el.tag in (f"{_NS_M}oMath", f"{_NS_M}oMathPara"):
+                if stack and stack[-1] == "instruction":
+                    found.append(el)
+        chosen = set(found)
+
+        def inside_chosen(el: ET.Element) -> bool:
+            parent = parent_map.get(el)
+            while parent is not None:
+                if parent in chosen:
+                    return True
+                parent = parent_map.get(parent)
+            return False
+
+        return [el for el in found if not inside_chosen(el)]
 
     # ------------------------------------------------------------------
     # Phase 2a: pandoc on structure-only docx
@@ -440,7 +482,11 @@ class MathExtractor:
             else:
                 # Inline math — strip \tag (equation numbers don't apply)
                 latex = self._RE_TAG.sub("", latex)
-                replacement = f"${latex}$"
+                if self._is_text_letter(latex):
+                    # A letter such as the é of Poincaré typed as an equation
+                    replacement = latex
+                else:
+                    replacement = f"${latex}$"
 
             markdown = markdown.replace(placeholder, replacement)
 
@@ -570,7 +616,61 @@ class MathExtractor:
         for greek, latin in cls._GREEK_LATIN_CAPITALS.items():
             content = content.replace(greek, f"\\mathrm{{{latin}}}")
         content = content.replace("\\overset{\u20d1}", "\\overset{\\rightharpoonup}")
+        content = cls._fix_group_braces(content)
         return cls._RE_LOWER_MATHBB.sub(r"\\mathbbm{\1}", content)
+
+    # pandoc sets Word's grouping brace (a groupChr) as a character over or
+    # under the group: \overset{X}{︸} is X with a brace beneath it
+    _GROUP_BRACES = (
+        ("\\overset{", "\ufe38", "\\underbrace"),
+        ("\\underset{", "\ufe37", "\\overbrace"),
+    )
+
+    @classmethod
+    def _fix_group_braces(cls, content: str) -> str:
+        r"""``\overset{X}{︸}`` -> ``\underbrace{X}``; ``\underset{X}{︷}`` -> ``\overbrace{X}``."""
+        for opener, char, command in cls._GROUP_BRACES:
+            start = 0
+            while True:
+                i = content.find(opener, start)
+                if i == -1:
+                    break
+                j = cls._matching_brace(content, i + len(opener) - 1)
+                tail = "{" + char + "}"
+                if j != -1 and content.startswith(tail, j + 1):
+                    body = content[i + len(opener):j]
+                    content = (content[:i] + command + "{" + body + "}"
+                               + content[j + 1 + len(tail):])
+                start = i + 1
+        return content
+
+    @staticmethod
+    def _matching_brace(text: str, open_pos: int) -> int:
+        """Index of the brace closing the one at *open_pos*, or -1."""
+        depth = 0
+        i = open_pos
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return -1
+
+    @staticmethod
+    def _is_text_letter(latex: str) -> bool:
+        """True for a lone accented Latin letter, which belongs in the text."""
+        if len(latex) != 1:
+            return False
+        import unicodedata
+        return (latex.isalpha() and not latex.isascii()
+                and "LATIN" in unicodedata.name(latex, ""))
 
     @classmethod
     def _split_font_group(cls, match: re.Match) -> str:

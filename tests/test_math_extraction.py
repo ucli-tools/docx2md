@@ -234,6 +234,23 @@ class TestMathGlyphs:
         assert extractor._clean_latex(r"\mathbb{C}") == r"\mathbb{C}"
 
 
+class TestTextLetterAndBraces:
+    """Word constructs pandoc leaves unprintable."""
+
+    def test_accented_letter_equation_becomes_text(self, extractor):
+        equations = [{"idx": 0, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_0000@@"}]
+        result = extractor._splice("Poincar@@MATH_INLINE_0000@@-Hopf", {0: "\u00e9"}, equations)
+        assert result == "Poincar\u00e9-Hopf"
+
+    def test_latin_variable_stays_math(self, extractor):
+        equations = [{"idx": 0, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_0000@@"}]
+        assert extractor._splice("a @@MATH_INLINE_0000@@ b", {0: "x"}, equations) == "a $x$ b"
+
+    def test_grouping_brace_below(self, extractor):
+        latex = "\\underset{n}{\\overset{[X,Y]}{\ufe38}}"
+        assert extractor._clean_latex(latex) == r"\underset{n}{\underbrace{[X,Y]}}"
+
+
 class TestSplitFontGroup:
     """Operators swept into a math-alphabet group by Word's font runs."""
 
@@ -580,6 +597,51 @@ class TestExtractMathFromDocx:
         doc_text = (unpack / "word" / "document.xml").read_text()
         assert "@@MATH_INLINE_0000@@" in doc_text
         assert "<m:oMath" not in doc_text
+
+    def test_math_in_index_entry_dropped(self, tmp_path, extractor):
+        """Math inside an XE field instruction is field code, not text."""
+        body = (
+            "<w:p>"
+            '<w:r><w:t xml:space="preserve">Poincar</w:t></w:r>'
+            '<m:oMath><m:r><m:t>\u00e9</m:t></m:r></m:oMath>'
+            '<w:r><w:t xml:space="preserve">-Hopf theorem</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> XE "Poincar</w:instrText></w:r>'
+            '<m:oMath><m:r><m:t>\u00e9</m:t></m:r></m:oMath>'
+            '<w:r><w:instrText xml:space="preserve">-Hopf theorem" </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:r><w:t xml:space="preserve">, which states</w:t></w:r>'
+            "</w:p>"
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+
+        sanitized, equations = extractor._extract_math_from_docx(docx_path, work_dir)
+
+        assert len(equations) == 1
+        unpack = tmp_path / "verify"
+        unzip_docx(sanitized, unpack)
+        doc_text = (unpack / "word" / "document.xml").read_text()
+        assert "<m:oMath" not in doc_text
+
+    def test_math_in_field_result_kept(self, tmp_path, extractor):
+        """Math after a field's separate mark is its visible result."""
+        body = (
+            "<w:p>"
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> QUOTE </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            "</w:p>"
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+
+        _, equations = extractor._extract_math_from_docx(docx_path, work_dir)
+        assert len(equations) == 1
 
     def test_extract_display_math(self, tmp_path, extractor):
         """Display oMathPara is replaced with @@MATH_DISPLAY_NNNN@@ placeholder."""
