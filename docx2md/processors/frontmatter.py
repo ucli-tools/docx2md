@@ -18,9 +18,12 @@ Metadata sources (priority order):
 """
 
 import re
+import subprocess
+import zipfile
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from docx2md.utils.logging_utils import get_logger
 
@@ -46,6 +49,89 @@ _TITLE_BLOCK = re.compile(
     r'(?:[A-Z][^\n<]*?--[^\n]+\n\n)?',   # optional author line + blank line
     re.MULTILINE,
 )
+
+# Word fonts and free fonts drawn to the same metrics, used when the Word
+# font itself is not installed, so the text sets in the same space
+_FONT_TWINS = {
+    'Cambria': 'Caladea',
+    'Calibri': 'Carlito',
+    'Calibri Light': 'Carlito',
+    'Times New Roman': 'Liberation Serif',
+    'Arial': 'Liberation Sans',
+    'Helvetica': 'Liberation Sans',
+    'Courier New': 'Liberation Mono',
+    'Georgia': 'Gelasio',
+}
+_SANS_FONTS = {
+    'Calibri', 'Calibri Light', 'Carlito', 'Arial', 'Helvetica',
+    'Liberation Sans', 'Segoe UI', 'Verdana', 'Tahoma', 'Aptos',
+    'Aptos Display', 'DejaVu Sans',
+}
+_RE_RUN_FONT = re.compile(r'<w:rFonts\b[^>]*\bw:ascii="([^"]+)"')
+
+
+def _installed_fonts() -> Set[str]:
+    """Font family names fontconfig knows, or an empty set without it."""
+    try:
+        out = subprocess.run(
+            ['fc-list', ':', 'family'], capture_output=True, text=True, timeout=30
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {name.strip() for line in out.splitlines() for name in line.split(',')}
+
+
+def _docx_fonts(docx_path: Path) -> Tuple[str, str]:
+    """(body font, heading font) of a Word document, '' where unknown.
+
+    The body font is the one most runs are set in (Word documents often
+    override their Normal style run by run); math fonts are left out. The
+    heading font is Heading 1's, resolved through the theme when the style
+    names a theme font.
+    """
+    try:
+        with zipfile.ZipFile(docx_path) as z:
+            names = set(z.namelist())
+            doc = z.read('word/document.xml').decode('utf-8', 'replace')
+            styles = z.read('word/styles.xml').decode('utf-8', 'replace') \
+                if 'word/styles.xml' in names else ''
+            theme = z.read('word/theme/theme1.xml').decode('utf-8', 'replace') \
+                if 'word/theme/theme1.xml' in names else ''
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return '', ''
+
+    theme_fonts = dict(re.findall(
+        r'<a:(major|minor)Font>\s*<a:latin typeface="([^"]*)"', theme))
+
+    def style_font(style_id: str) -> str:
+        m = re.search(r'<w:style\b[^>]*w:styleId="%s".*?</w:style>' % style_id, styles, re.S)
+        if not m:
+            return ''
+        f = re.search(r'<w:rFonts\b([^>]*)>', m.group(0))
+        if not f:
+            return ''
+        ascii_font = re.search(r'\bw:ascii="([^"]+)"', f.group(1))
+        if ascii_font:
+            return ascii_font.group(1)
+        theme_ref = re.search(r'\bw:asciiTheme="(major|minor)', f.group(1))
+        return theme_fonts.get(theme_ref.group(1), '') if theme_ref else ''
+
+    runs = Counter(f for f in _RE_RUN_FONT.findall(doc) if 'Math' not in f)
+    body = runs.most_common(1)[0][0] if runs else (
+        style_font('Normal') or theme_fonts.get('minor', ''))
+    heading = style_font('Heading1') or theme_fonts.get('major', '')
+    return body, heading
+
+
+def _resolve_font(name: str, installed: Set[str]) -> str:
+    """The font itself if installed, else its metric twin if installed."""
+    if not name:
+        return ''
+    if name in installed:
+        return name
+    twin = _FONT_TWINS.get(name, '')
+    return twin if twin in installed else ''
+
 
 # Headings that should get \newpage before them
 _NEWPAGE_HEADINGS = re.compile(
@@ -157,6 +243,20 @@ def generate_yaml_frontmatter(
     if '[index:' in content and 'index' not in overrides:
         overrides['index'] = True
 
+    # The document's own typefaces, or installed fonts with their metrics
+    if fm_cfg.get('fonts', True) and input_path.suffix.lower() == '.docx' \
+            and input_path.exists():
+        body, heading = _docx_fonts(input_path)
+        installed = _installed_fonts()
+        mainfont = _resolve_font(body, installed)
+        if mainfont and 'mainfont' not in overrides:
+            overrides['mainfont'] = mainfont
+        if heading in _SANS_FONTS and heading != body:
+            sansfont = _resolve_font(heading, installed)
+            if sansfont and 'sansfont' not in overrides:
+                overrides['sansfont'] = sansfont
+                overrides.setdefault('headings_sans', True)
+
     # ---- Detect body front matter headings ----
     has_body_frontmatter = {
         'dedication': bool(re.search(r'^# Dedication\s*$', content, re.MULTILINE)),
@@ -266,6 +366,10 @@ def _build_yaml_template(
     field('footer', footer_default)
     field('pageof', True, force_active=True)
     field('date_footer', True, force_active=True)
+    # Typefaces of the Word document (or installed fonts with their metrics)
+    field('mainfont', 'DejaVu Serif')
+    field('sansfont', 'DejaVu Sans')
+    field('headings_sans', True)
     lines.append('')
 
     # === PROFESSIONAL BOOK FEATURES ===

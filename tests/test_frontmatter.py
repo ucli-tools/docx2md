@@ -274,3 +274,52 @@ class TestInsertNewpage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDocxFonts(unittest.TestCase):
+    """The Word document's typefaces carried into the front matter."""
+
+    def _docx(self, tmp: Path) -> Path:
+        import zipfile
+        path = tmp / "fonts.docx"
+        w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("word/document.xml",
+                       f'<w:document {w}><w:body>'
+                       '<w:r><w:rPr><w:rFonts w:ascii="Cambria"/></w:rPr></w:r>'
+                       '<w:r><w:rPr><w:rFonts w:ascii="Cambria"/></w:rPr></w:r>'
+                       '<w:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr></w:r>'
+                       '<w:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr></w:r>'
+                       '<w:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr></w:r>'
+                       '</w:body></w:document>')
+            z.writestr("word/styles.xml",
+                       f'<w:styles {w}><w:style w:styleId="Heading1"><w:rPr>'
+                       '<w:rFonts w:asciiTheme="majorHAnsi"/></w:rPr></w:style></w:styles>')
+            z.writestr("word/theme/theme1.xml",
+                       '<a:theme><a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont>'
+                       '<a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:theme>')
+        return path
+
+    def test_body_and_heading_fonts(self):
+        import tempfile
+        from docx2md.processors.frontmatter import _docx_fonts
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_docx_fonts(self._docx(Path(d))), ("Cambria", "Calibri Light"))
+
+    def test_metric_twin_when_word_font_missing(self):
+        from docx2md.processors.frontmatter import _resolve_font
+        self.assertEqual(_resolve_font("Cambria", {"Caladea"}), "Caladea")
+        self.assertEqual(_resolve_font("Cambria", {"Cambria", "Caladea"}), "Cambria")
+        self.assertEqual(_resolve_font("Cambria", set()), "")
+
+    def test_front_matter_fonts(self):
+        import tempfile
+        from unittest import mock
+        from docx2md.processors import frontmatter
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(
+                frontmatter, "_installed_fonts", return_value={"Caladea", "Carlito"}):
+            fm, _ = generate_yaml_frontmatter({}, {}, self._docx(Path(d)), "Text.")
+        parsed = _parse_yaml(fm)
+        self.assertEqual(parsed["mainfont"], "Caladea")
+        self.assertEqual(parsed["sansfont"], "Carlito")
+        self.assertIs(parsed["headings_sans"], True)
