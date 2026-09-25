@@ -459,6 +459,17 @@ class TestParseBatchOutput:
         assert result[0] == "a"
         assert result[1] == "b + c"
 
+    def test_parse_past_ten_thousand_equations(self, extractor):
+        """Markers with five digits split the batch like four-digit ones."""
+        equations = [
+            {"idx": 9999, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_9999@@"},
+            {"idx": 10000, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_10000@@"},
+        ]
+        raw_md = "@@EQ_9999@@\n\n$a$\n\n@@EQ_10000@@\n\n$b$\n"
+        result = extractor._parse_batch_output(raw_md, equations)
+        assert result[9999] == "a"
+        assert result[10000] == "b"
+
     def test_parse_empty_equation(self, extractor):
         equations = [{"idx": 0, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_0000@@"}]
         raw_md = "@@EQ_0000@@\n\n\n"

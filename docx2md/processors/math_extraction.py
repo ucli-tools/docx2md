@@ -329,7 +329,8 @@ class MathExtractor:
         """
         result: Dict[int, str] = {}
         lines = raw_md.split("\n")
-        marker_re = re.compile(r"@@EQ_(\d{4})@@")
+        # Any number of digits: {idx:04d} grows past four at equation 10,000
+        marker_re = re.compile(r"@@EQ_(\d+)@@")
 
         i = 0
         while i < len(lines):
