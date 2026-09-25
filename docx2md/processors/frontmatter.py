@@ -290,6 +290,11 @@ def generate_yaml_frontmatter(
     # them instead of letting LaTeX float them past the paragraph
     if re.search(r'^!\[', content, re.MULTILINE):
         needed.append('\\floatplacement{figure}{H}')
+    # Word documents run long equations inline; rather than let one stick
+    # into the margin, let TeX space out a paragraph that cannot otherwise
+    # be set (a paragraph that sets normally is untouched)
+    if '$' in content:
+        needed.append('\\setlength{\\emergencystretch}{3em}')
     if needed:
         includes = list(overrides.get('header-includes', []))
         includes += [inc for inc in needed if inc not in includes]
