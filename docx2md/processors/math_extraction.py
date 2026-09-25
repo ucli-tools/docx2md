@@ -196,12 +196,14 @@ class MathExtractor:
             if inside_para:
                 continue
 
-            placeholder = f"@@MATH_INLINE_{idx:04d}@@"
+            # Word displays an equation that stands alone in its paragraph
+            kind = "display" if self._alone_in_paragraph(math_el, parent_map) else "inline"
+            placeholder = f"@@MATH_{kind.upper()}_{idx:04d}@@"
             xml_bytes = ET.tostring(math_el, encoding="unicode")
 
             equations.append({
                 "idx": idx,
-                "kind": "inline",
+                "kind": kind,
                 "xml": xml_bytes,
                 "placeholder": placeholder,
             })
@@ -240,6 +242,26 @@ class MathExtractor:
         rezip_docx(unpack_dir, sanitized_path)
 
         return sanitized_path, equations
+
+    @staticmethod
+    def _alone_in_paragraph(
+        math_el: ET.Element, parent_map: Dict[ET.Element, ET.Element]
+    ) -> bool:
+        """True when a paragraph holds this equation and no text."""
+        para = parent_map.get(math_el)
+        if para is None or para.tag != f"{_NS_W}p":
+            return False
+        for child in para:
+            if child is math_el or child.tag in (
+                f"{_NS_W}pPr", f"{_NS_W}bookmarkStart", f"{_NS_W}bookmarkEnd",
+                f"{_NS_W}proofErr",
+            ):
+                continue
+            if child.tag.startswith(_NS_M):
+                return False
+            if "".join(t.text or "" for t in child.iter(f"{_NS_W}t")).strip():
+                return False
+        return True
 
     @staticmethod
     def _math_in_field_instructions(

@@ -801,6 +801,19 @@ class TestExtractMathFromDocx:
         _, equations = extractor._extract_math_from_docx(docx_path, work_dir)
         assert len(equations) == 1
 
+    def test_equation_alone_in_paragraph_is_display(self, tmp_path, extractor):
+        """Word displays an equation standing alone in its paragraph."""
+        body = (
+            "<w:p><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath></w:p>"
+            '<w:p><w:r><w:t xml:space="preserve">Text </w:t></w:r>'
+            "<m:oMath><m:r><m:t>y</m:t></m:r></m:oMath></w:p>"
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        _, equations = extractor._extract_math_from_docx(docx_path, work_dir)
+        assert [e["kind"] for e in equations] == ["display", "inline"]
+
     def test_extract_display_math(self, tmp_path, extractor):
         """Display oMathPara is replaced with @@MATH_DISPLAY_NNNN@@ placeholder."""
         body = (
@@ -825,6 +838,7 @@ class TestExtractMathFromDocx:
             "<m:oMathPara><m:oMath><m:r><m:t>display</m:t></m:r></m:oMath></m:oMathPara>"
             "</w:p>"
             "<w:p>"
+            '<w:r><w:t xml:space="preserve">Text </w:t></w:r>'
             '<m:oMath><m:r><m:t>inline</m:t></m:r></m:oMath>'
             "</w:p>"
         )
