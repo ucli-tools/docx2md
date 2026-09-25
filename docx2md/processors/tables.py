@@ -172,8 +172,14 @@ def _process_pipe_tables(content: str, header_style: str) -> str:
     Returns:
         Content with processed pipe tables
     """
-    # Regular expression to find pipe tables
-    table_pattern = r'(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n)*)'
+    # Regular expression to find pipe tables. The separator must be dashes
+    # only in each cell (|---|:--|); a grid table's inner lines (a row above
+    # a rule of dash groups, "|  ---- ----  |") must not match, or bolding
+    # its "header" would break the grid's alignment.
+    table_pattern = (
+        r'(?:^|(?<=\n))'
+        r'(\|[^\n]+\|\n\|(?:[ ]*:?-+:?[ ]*\|)+\n(?:\|[^\n]+\|\n)*)'
+    )
     
     def format_table(match):
         table = match.group(1)

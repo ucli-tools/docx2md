@@ -260,6 +260,80 @@ class TestTextLetterAndBraces:
         assert extractor._clean_latex(latex) == r"\underset{n}{\underbrace{[X,Y]}}"
 
 
+class TestTablesWithMath:
+    """Position-based tables holding equations become pipe tables."""
+
+    P = "@@MATH_DISPLAY_%04d@@"
+
+    def test_multiline_table_with_header(self, extractor):
+        p = self.P
+        md = "\n".join([
+            "Before.", "",
+            "  " + "-" * 49,
+            "  " + p % 1 + "   " + p % 2,
+            "  " + "-" * 21 + " " + "-" * 21 + " ",
+            "  " + p % 3 + "   " + p % 4, "",
+            "  " + p % 5,
+            "  " + "-" * 49, "",
+            "After.",
+        ])
+        out = extractor._pipe_tables_with_math(md)
+        assert "| @@MATH_DISPLAY_0001@@ | @@MATH_DISPLAY_0002@@ |" in out
+        assert "|---|---|" in out
+        assert "| @@MATH_DISPLAY_0003@@ | @@MATH_DISPLAY_0004@@ |" in out
+        assert "| @@MATH_DISPLAY_0005@@ |  |" in out
+        assert out.startswith("Before.") and out.rstrip().endswith("After.")
+
+    def test_headerless_simple_table(self, extractor):
+        p = self.P
+        md = "\n".join([
+            "  " + "-" * 21 + " " + "-" * 21,
+            "  " + p % 1 + "   " + p % 2,
+            "  " + p % 3 + "   " + p % 4,
+            "  " + "-" * 21 + " " + "-" * 21,
+        ])
+        out = extractor._pipe_tables_with_math(md).split("\n")
+        assert out[0] == "|  |  |"
+        assert out[2] == "| @@MATH_DISPLAY_0001@@ | @@MATH_DISPLAY_0002@@ |"
+        assert out[3] == "| @@MATH_DISPLAY_0003@@ | @@MATH_DISPLAY_0004@@ |"
+
+    def test_grid_table(self, extractor):
+        p = self.P
+        md = "\n".join([
+            "+-----------------------+-----------------------+",
+            "| " + p % 1 + " | text                  |",
+            "|                       | more                  |",
+            "+-----------------------+-----------------------+",
+        ])
+        out = extractor._pipe_tables_with_math(md).split("\n")
+        assert out[2] == "| @@MATH_DISPLAY_0001@@ | text more |"
+
+    def test_nested_grid_table_flattened(self, extractor):
+        md = "\n".join([
+            "+----------------------+----------------------+",
+            "|   ---------------    |   ---------------    |",
+            "|   1       2          |   1       2          |",
+            "|   ------- -------    |   ------- -------    |",
+            "|   2       1          |   3       4          |",
+            "|   ---------------    |   ---------------    |",
+            "+----------------------+----------------------+",
+        ])
+        out = extractor._pipe_tables_with_math(md)
+        assert "| 1 | 2 |\n|---|---|\n| 2 | 1 |" in out
+        assert "| 1 | 2 |\n|---|---|\n| 3 | 4 |" in out
+        assert "+---" not in out
+
+    def test_table_without_math_untouched(self, extractor):
+        md = "\n".join(["  -----  -----", "  a      b", "  -----  -----"])
+        assert extractor._pipe_tables_with_math(md) == md
+
+    def test_display_math_in_cell_set_inline(self, extractor):
+        equations = [{"idx": 1, "kind": "display", "xml": "", "placeholder": "@@MATH_DISPLAY_0001@@"}]
+        md = "| @@MATH_DISPLAY_0001@@ | b |"
+        out = extractor._splice(md, {1: "\\frac{2i\\pi}{13}\n|x| \\tag{1.2}"}, equations)
+        assert out == "| $\\displaystyle \\frac{2i\\pi}{13} \\vert x\\vert $ | b |"
+
+
 class TestSplitFontGroup:
     """Operators swept into a math-alphabet group by Word's font runs."""
 
@@ -814,3 +888,23 @@ class TestConfigIntegration:
         """equation_numbers not in defaults — user enables via config/YAML."""
         from docx2md.processors.frontmatter import _DEFAULT_MDTEXPDF
         assert "equation_numbers" not in _DEFAULT_MDTEXPDF
+
+
+class TestPipeTableBolding:
+    """docx2md.processors.tables bolds pipe-table headers only."""
+
+    def test_grid_table_inner_lines_untouched(self):
+        from docx2md.processors.tables import _process_pipe_tables
+        grid = (
+            "+------------------+\n"
+            "|   1       2      |\n"
+            "|   ------- -------|\n"
+            "|   2       1      |\n"
+            "+------------------+\n"
+        )
+        assert _process_pipe_tables(grid, "bold") == grid
+
+    def test_pipe_table_header_bolded(self):
+        from docx2md.processors.tables import _process_pipe_tables
+        table = "| a | b |\n|---|---|\n| 1 | 2 |\n"
+        assert _process_pipe_tables(table, "bold").startswith("| **a** | **b** |")

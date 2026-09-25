@@ -95,7 +95,10 @@ class MathExtractor:
             else:
                 eq_latex = {}
 
-            # Phase 3: splice equations back into markdown
+            # Phase 3: splice equations back into markdown. Tables holding
+            # equations become pipe tables first, while the fixed-width
+            # placeholders still line their columns up
+            markdown = self._pipe_tables_with_math(markdown)
             markdown = self._splice(markdown, eq_latex, equations)
             markdown = self._splice_index(markdown, eq_latex)
 
@@ -272,6 +275,180 @@ class MathExtractor:
             return False
 
         return [el for el in found if not inside_chosen(el)]
+
+    # ------------------------------------------------------------------
+    # Tables holding equations
+    # ------------------------------------------------------------------
+
+    _RE_FULL_RULE = re.compile(r"^\s*-{3,}\s*$")
+    _RE_COLUMN_RULE = re.compile(r"^\s*-+(?:\s+-+)+\s*$")
+    _RE_GRID_RULE = re.compile(r"^\+[-=:+]+\+\s*$")
+
+    @staticmethod
+    def _pipe_row(cells: List[str]) -> str:
+        cells = [re.sub(r"\s+", " ", c).strip().replace("|", "\\|") for c in cells]
+        return "| " + " | ".join(cells) + " |"
+
+    @classmethod
+    def _pipe_table(cls, header: List[str], rows: List[List[str]]) -> List[str]:
+        width = max([len(header)] + [len(r) for r in rows])
+        header = header + [""] * (width - len(header))
+        out = [cls._pipe_row(header), "|" + "---|" * width]
+        for row in rows:
+            out.append(cls._pipe_row(row + [""] * (width - len(row))))
+        return out
+
+    @staticmethod
+    def _slice_columns(line: str, starts: List[int]) -> List[str]:
+        cells = []
+        for k, start in enumerate(starts):
+            end = starts[k + 1] if k + 1 < len(starts) else len(line)
+            cells.append(line[start:end])
+        return cells
+
+    def _pipe_tables_with_math(self, markdown: str) -> str:
+        """Rewrite pandoc's multiline, simple and grid tables that hold
+        equation placeholders as pipe tables.
+
+        Those formats place cells by character column. The placeholders all
+        have one width, so the columns line up now; the LaTeX spliced in
+        later does not, and the table would come apart. Pipe tables do not
+        depend on position.
+        """
+        lines = markdown.split("\n")
+        out: List[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            block = None
+            if self._RE_GRID_RULE.match(line):
+                block = self._read_grid_table(lines, i)
+            elif self._RE_FULL_RULE.match(line) or self._RE_COLUMN_RULE.match(line):
+                block = self._read_multiline_table(lines, i)
+            if block and self._RE_GRID_RULE.match(line):
+                end, header, rows = block
+                nested = self._nested_tables(header, rows)
+                if nested is not None:
+                    out += nested
+                    i = end + 1
+                    continue
+                join = lambda cell: " ".join(cell)
+                block = (end, [join(c) for c in header], [[join(c) for c in r] for r in rows])
+            if block:
+                end, header, rows = block
+                if any("@@MATH_" in c for row in [header] + rows for c in row):
+                    out += self._pipe_table(header, rows)
+                    i = end + 1
+                    continue
+            out.append(line)
+            i += 1
+        return "\n".join(out)
+
+    def _read_multiline_table(self, lines: List[str], start: int):
+        """(last line index, header cells, body rows) of a table whose
+        column rule is a line of dash groups, or None."""
+        i = start
+        header_lines: List[str] = []
+        if self._RE_FULL_RULE.match(lines[i]):
+            # Top border, then header lines up to the column rule
+            j = i + 1
+            while j < len(lines) and lines[j].strip() and not self._RE_COLUMN_RULE.match(lines[j]):
+                header_lines.append(lines[j])
+                j += 1
+            if j >= len(lines) or not self._RE_COLUMN_RULE.match(lines[j]):
+                return None
+            rule = j
+        else:
+            rule = i
+        starts = [m.start() for m in re.finditer(r"-+", lines[rule])]
+        body: List[List[str]] = []
+        current: List[str] = []
+        j = rule + 1
+        while j < len(lines):
+            text = lines[j]
+            if self._RE_FULL_RULE.match(text) or self._RE_COLUMN_RULE.match(text):
+                break
+            if not text.strip():
+                if current:
+                    body.append(current)
+                    current = []
+                # A blank line after the last row with no closing rule ends it
+                if j + 1 < len(lines) and not lines[j + 1].startswith(" "):
+                    return None
+            else:
+                current.append(text)
+            j += 1
+        else:
+            return None
+        if current:
+            body.append(current)
+        # Blank lines separate the rows of a multiline table; without them
+        # (a simple table) every line is a row
+        multiline = any(not lines[k].strip() for k in range(rule + 1, j))
+        if not multiline:
+            body = [[r] for group in body for r in group]
+
+        def cells(group: List[str]) -> List[str]:
+            cols = [self._slice_columns(l, starts) for l in group]
+            return [" ".join(c[k] for c in cols) for k in range(len(starts))]
+
+        header = cells(header_lines) if header_lines else [""] * len(starts)
+        return j, header, [cells(g) for g in body]
+
+    def _read_grid_table(self, lines: List[str], start: int):
+        """(last line index, header, rows) of a grid table, or None.
+
+        Each cell is the list of its text lines, so a cell holding a nested
+        table can be read as one.
+        """
+        border = lines[start].rstrip()
+        bars = [k for k, ch in enumerate(border) if ch == "+"]
+        rows: List[List[List[str]]] = []
+        header: List[List[str]] = []
+        current: List[str] = []
+        j = start + 1
+        while j < len(lines):
+            text = lines[j].rstrip()
+            if self._RE_GRID_RULE.match(text):
+                row = [[l[bars[k] + 1:bars[k + 1]] for l in current]
+                       for k in range(len(bars) - 1)]
+                if "=" in text and not header and not rows:
+                    header = row
+                else:
+                    rows.append(row)
+                current = []
+                if j + 1 >= len(lines) or not lines[j + 1].startswith("|"):
+                    return j, header or [[] for _ in bars[:-1]], rows
+            elif text.startswith("|"):
+                current.append(text)
+            else:
+                return None
+            j += 1
+        return None
+
+    def _nested_tables(self, header, rows) -> Optional[List[str]]:
+        """A grid table whose cells hold tables, as those tables one after
+        another (pipe tables). LaTeX cannot set a longtable inside a table
+        cell, which is how pandoc writes a nested table. None when no cell
+        holds a table."""
+        cells = [c for row in [header] + rows for c in row]
+        if not any(any(self._RE_FULL_RULE.match(l) or self._RE_COLUMN_RULE.match(l)
+                       for l in c) for c in cells):
+            return None
+        out: List[str] = []
+        for cell in cells:
+            k = next((n for n, l in enumerate(cell)
+                      if self._RE_FULL_RULE.match(l) or self._RE_COLUMN_RULE.match(l)), None)
+            if k is None:
+                text = re.sub(r"\s+", " ", " ".join(cell)).strip()
+                if text:
+                    out += [text, ""]
+                continue
+            inner = self._read_multiline_table(cell + [""], k)
+            if inner:
+                _, head, body = inner
+                out += self._pipe_table(head, body) + [""]
+        return out
 
     # ------------------------------------------------------------------
     # Word index entries (XE fields)
@@ -617,6 +794,12 @@ class MathExtractor:
         equations: List[Dict[str, Any]],
     ) -> str:
         """Replace placeholders in *markdown* with delimited LaTeX."""
+        # Placeholders in pipe-table rows: a cell holds one line, so display
+        # math there is set inline in display style
+        in_table = set(re.findall(
+            r"@@MATH_(?:DISPLAY|INLINE)_\d+@@",
+            "\n".join(l for l in markdown.split("\n") if l.startswith("|")),
+        ))
         for eq in equations:
             idx = eq["idx"]
             placeholder = eq["placeholder"]
@@ -625,6 +808,15 @@ class MathExtractor:
             if not latex:
                 # Remove placeholder if equation came back empty
                 markdown = markdown.replace(placeholder, "")
+                continue
+
+            if placeholder in in_table:
+                body = self._RE_TAG.sub("", latex)
+                body = re.sub(r"\s*\n\s*", " ", body).strip()
+                body = body.replace("\\|", "\\Vert ").replace("|", "\\vert ")
+                if eq["kind"] == "display":
+                    body = "\\displaystyle " + body
+                markdown = markdown.replace(placeholder, f"${body}$")
                 continue
 
             if eq["kind"] == "display":
