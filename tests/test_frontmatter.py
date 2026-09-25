@@ -332,3 +332,20 @@ class TestDocxFonts(unittest.TestCase):
             self.assertEqual(frontmatter._greek_fallback("Caladea", "A Ἰσόν phrase."), "Noto Serif")
             self.assertEqual(frontmatter._greek_fallback("Caladea", "Only $\\sigma$ and $σ$."), "")
             self.assertEqual(frontmatter._greek_fallback("Noto Serif", "A Ἰσόν phrase."), "")
+
+
+class TestTitleAccents(unittest.TestCase):
+
+    def test_title_takes_the_texts_accents(self):
+        from docx2md.processors.frontmatter import _accented_like_text
+        text = "The Café series. Café again, and the Cafe Foundation."
+        self.assertEqual(_accented_like_text("Cafe", text), "Café")
+
+    def test_title_kept_when_text_has_no_accent(self):
+        from docx2md.processors.frontmatter import _accented_like_text
+        self.assertEqual(_accented_like_text("Cafe", "The Cafe Foundation."), "Cafe")
+
+    def test_generated_title_accented(self):
+        fm, _ = generate_yaml_frontmatter(
+            {"title": "Cafe"}, {}, Path("book.docx"), "Café is the study. Café.")
+        self.assertEqual(_parse_yaml(fm)["title"], "Café")

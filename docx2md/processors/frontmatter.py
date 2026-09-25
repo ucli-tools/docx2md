@@ -154,6 +154,26 @@ def _greek_fallback(mainfont: str, content: str) -> str:
     return ''
 
 
+def _strip_accents(word: str) -> str:
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFD', word)
+                   if not unicodedata.combining(c))
+
+
+def _accented_like_text(title: str, content: str) -> str:
+    """*title* with each unaccented word spelt as the text mostly spells it."""
+    words = Counter(re.findall(r'\w+', content))
+    def respell(match: re.Match) -> str:
+        word = match.group(0)
+        variants = {w: n for w, n in words.items()
+                    if w != word and _strip_accents(w) == word}
+        if not variants:
+            return word
+        best, count = max(variants.items(), key=lambda kv: kv[1])
+        return best if count > words.get(word, 0) else word
+    return re.sub(r'\w+', respell, title)
+
+
 def _resolve_font(name: str, installed: Set[str]) -> str:
     """The font itself if installed, else its metric twin if installed."""
     if not name:
@@ -246,6 +266,10 @@ def generate_yaml_frontmatter(
     # Last resort: derive title from filename
     if not title:
         title = input_path.stem.replace('_', ' ').replace('-', ' ').title()
+
+    # Document properties often drop accents the text keeps ("Cafe" for
+    # "Café"): take the text's own spelling of each title word
+    title = _accented_like_text(title, content)
 
     # Fall back to config default_author
     if not author:
