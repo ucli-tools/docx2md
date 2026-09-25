@@ -55,6 +55,23 @@ class TestFigureProcessor(unittest.TestCase):
         self.assertIn("$E = mc^2$", result)
         self.assertNotIn("generic alt", result)
 
+    def test_italic_run_across_math_leaves_no_asterisk(self):
+        content = (
+            "![generic alt](img/eq.png)\n\n"
+            "***Figure 1.1.3 --*** *The* $D_{3}$ *group permutations.*\n\n"
+            "***Figure 1.1.4 --*** *The formula $E = mc^2$ in context.*\n\n"
+            "End."
+        )
+        result = self._proc().process(content)
+        alt = result.split("](")[0]
+        self.assertNotIn("*", alt)
+        self.assertIn("The $D_{3}$ group permutations.", alt)
+
+    def test_escaped_asterisk_kept(self):
+        content = "![alt](img/a.png)\n\n***Figure 2.*** *-- The star \\* operator.*\n\nEnd."
+        result = self._proc().process(content)
+        self.assertIn("\\*", result.split("](")[0])
+
     # ------------------------------------------------------------------
     # No caption following image
     # ------------------------------------------------------------------

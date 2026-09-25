@@ -140,11 +140,18 @@ def generate_yaml_frontmatter(
     # ---- Config overrides ----
     overrides = dict(fm_cfg.get('mdtexpdf', {}))
 
+    # Packages and settings the converted content needs
+    needed = []
     # Lowercase double-struck letters are set with bbm's \mathbbm
     if '\\mathbbm{' in content:
+        needed.append('\\usepackage{bbm}')
+    # Word places images in the text; keep figures where the document has
+    # them instead of letting LaTeX float them past the paragraph
+    if re.search(r'^!\[', content, re.MULTILINE):
+        needed.append('\\floatplacement{figure}{H}')
+    if needed:
         includes = list(overrides.get('header-includes', []))
-        if '\\usepackage{bbm}' not in includes:
-            includes.append('\\usepackage{bbm}')
+        includes += [inc for inc in needed if inc not in includes]
         overrides['header-includes'] = includes
 
     # ---- Detect body front matter headings ----

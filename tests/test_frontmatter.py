@@ -37,6 +37,10 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
         fm, _ = self._gen(content="Text $D_{3\\mathbbm{c}}$ here.")
         self.assertIn("\\usepackage{bbm}", _parse_yaml(fm)["header-includes"])
 
+    def test_figures_kept_in_place_when_document_has_images(self):
+        fm, _ = self._gen(content="Text.\n\n![Figure 1](./img/a.png)\n")
+        self.assertIn("\\floatplacement{figure}{H}", _parse_yaml(fm)["header-includes"])
+
     def test_no_bbm_without_lowercase_double_struck(self):
         fm, _ = self._gen(content="Text $\\mathbb{C}$ here.")
         self.assertNotIn("header-includes", _parse_yaml(fm))

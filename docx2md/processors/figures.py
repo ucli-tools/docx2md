@@ -165,7 +165,11 @@ def _strip_emphasis_outside_math(text: str) -> str:
     for kind, part in tokens:
         if kind == 'text':
             # Remove emphasis markers
-            part = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', part, flags=re.DOTALL)
+            part = re.sub(r'(?<!\\)\*{1,3}(.*?)(?<!\\)\*{1,3}', r'\1', part, flags=re.DOTALL)
+            # An italic run that spans a math span leaves one marker on each
+            # side of it, unpaired within its text piece: drop what is left
+            # (a literal asterisk arrives escaped as \* and is kept)
+            part = re.sub(r'(?<!\\)\*+', '', part)
             # Clean up double spaces
             part = re.sub(r'  +', ' ', part)
         result.append(part)
