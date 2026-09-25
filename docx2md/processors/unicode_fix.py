@@ -102,7 +102,46 @@ def _fix_in_math(text: str, custom: list) -> str:
     return text
 
 
+# Mathematical alphanumeric symbols (U+1D400-U+1D7FF) typed in body text:
+# no text font has them, so each run becomes one inline equation
+_MATH_ALNUM_RUN = re.compile('[\U0001D400-\U0001D7FF]+')
+_MATH_ALNUM_STYLES = (
+    ('MATHEMATICAL BOLD ITALIC ', '\\boldsymbol{%s}'),
+    ('MATHEMATICAL BOLD ', '\\mathbf{%s}'),
+    ('MATHEMATICAL ITALIC ', '%s'),
+    ('MATHEMATICAL DOUBLE-STRUCK ', '\\mathbb{%s}'),
+    ('MATHEMATICAL SCRIPT ', '\\mathcal{%s}'),
+    ('MATHEMATICAL FRAKTUR ', '\\mathfrak{%s}'),
+    ('MATHEMATICAL SANS-SERIF ', '\\mathsf{%s}'),
+    ('MATHEMATICAL MONOSPACE ', '\\mathtt{%s}'),
+)
+
+
+def _math_alnum_latex(ch: str) -> str:
+    import unicodedata
+    name = unicodedata.name(ch, '')
+    for prefix, template in _MATH_ALNUM_STYLES:
+        if name.startswith(prefix):
+            rest = name[len(prefix):]
+            if rest.startswith('CAPITAL '):
+                letter = rest[len('CAPITAL '):]
+                base = letter if len(letter) == 1 else '\\' + letter.capitalize()
+            elif rest.startswith('SMALL '):
+                letter = rest[len('SMALL '):]
+                base = letter.lower() if len(letter) == 1 else '\\' + letter.lower()
+            elif rest.startswith('DIGIT '):
+                base = str(unicodedata.digit(ch))
+            else:
+                return ch
+            return template % base
+    return ch
+
+
 def _fix_in_text(text: str, custom: list) -> str:
+    # 𝑛 (MATHEMATICAL ITALIC SMALL N) in a sentence -> $n$
+    text = _MATH_ALNUM_RUN.sub(
+        lambda m: '$' + ''.join(_math_alnum_latex(c) for c in m.group(0)) + '$', text)
+
     # Handle ℓ followed by subscript digits as a unit: ℓ₁ → $\ell_1$
     def _ell_sub(m: re.Match) -> str:
         digits = m.group(1).translate(_SUB_DIGIT_MAP)

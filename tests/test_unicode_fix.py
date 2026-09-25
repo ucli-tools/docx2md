@@ -116,3 +116,11 @@ class TestUnicodeFixProcessor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_math_alphanumeric_letters_in_text_become_math():
+    from docx2md.processors.unicode_fix import UnicodeFixProcessor
+    p = UnicodeFixProcessor({})
+    assert p.process("If no integer 𝑛 establishes it") == "If no integer $n$ establishes it"
+    assert p.process("the algebra 𝔤 and 𝐀") == "the algebra $\\mathfrak{g}$ and $\\mathbf{A}$"
+    assert p.process("pair 𝑥𝑦 here") == "pair $xy$ here"
