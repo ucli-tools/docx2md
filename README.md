@@ -27,8 +27,8 @@ This tool bridges the gap between Word documents and the Markdown+LaTeX workflow
 
 ## Features
 
-- **Equation Conversion**: Accurately converts Word equations to LaTeX
-- **Image Extraction**: Properly extracts and references images
+- **Equation Conversion**: Accurately converts Word equations to LaTeX; Word equation numbers `#(1.2.3)` become `\tag{1.2.3}`, and font runs such as `\mathbb{\in R}` are trimmed to the letters they style (`\in \mathbb{R}`)
+- **Image Extraction**: Properly extracts and references images into one flat image directory
 - **Table Handling**: Converts Word tables to Markdown tables
 - **Batch Processing**: Process multiple files at once
 - **LaTeX Delimiter Fixing**: Standardizes equation delimiters

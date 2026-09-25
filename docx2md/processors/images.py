@@ -154,7 +154,10 @@ def extract_and_process_images(
     
     processed_images = 0
     failed_images = 0
-    
+    images_root = os.path.abspath(images_dir)
+    # Sources copied up from a subdirectory of images_dir (pandoc's media/)
+    extracted_sources = set()
+
     # Process each image
     for alt_text, image_path in image_matches:
         # Normalize the image path
@@ -196,11 +199,15 @@ def extract_and_process_images(
                     
                     # Save the optimized image
                     img.save(new_path, optimize=True, quality=85)
-            else:
+            elif os.path.abspath(full_path) != os.path.abspath(new_path):
                 # Just copy the file
                 import shutil
                 shutil.copy2(full_path, new_path)
-            
+
+            src = os.path.abspath(full_path)
+            if src != os.path.abspath(new_path) and src.startswith(images_root + os.sep):
+                extracted_sources.add(src)
+
             # Calculate the relative path from the output file to the image
             output_dir = os.path.dirname(os.path.abspath(output_file))
             
@@ -228,7 +235,17 @@ def extract_and_process_images(
         except Exception as e:
             logger.error(f"Failed to process image {full_path}: {str(e)}")
             failed_images += 1
-    
+
+    # pandoc extracts into images_dir/media/. Every image referenced from there
+    # now has its copy in images_dir, so the extraction copies are duplicates:
+    # remove them, then any subdirectories they leave empty.
+    for src in extracted_sources:
+        if os.path.exists(src):
+            os.remove(src)
+    for dirpath, _, _ in os.walk(images_root, topdown=False):
+        if dirpath != images_root and not os.listdir(dirpath):
+            os.rmdir(dirpath)
+
     # Final fix: directly replace any remaining incorrect image paths
     # This is a fallback in case the earlier replacements didn't catch everything
     

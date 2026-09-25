@@ -509,8 +509,114 @@ class MathExtractor:
         r'\\right(?=\s*(?:\\tag\{|$))', re.MULTILINE
     )
 
+    # Equation number that OMML wrapped in delimiters: #\left( 1.7.280) \right)
+    _RE_EQ_NUMBER_LEFT_RIGHT = re.compile(
+        r'(\\?#)\s*\\left\(\s*([0-9]+(?:\.[0-9]+)*[a-z]?)\s*\)?\s*\\right\)'
+    )
+
+    # Word's number separator left with no number after it, at end of line
+    _RE_EMPTY_EQ_NUMBER = re.compile(r'[ \t]*\\#[ \t]*$', re.MULTILINE)
+
     # QED marker: \#\square or \# \square (hash + tombstone)
     _RE_QED = re.compile(r'\\?#\s*\\square')
+
+    # A math-alphabet group with no nested braces: \mathbb{\in R,\ }
+    _RE_FONT_GROUP = re.compile(
+        r'\\(mathbb|mathbf|mathcal|mathfrak|mathrm|mathit|mathsf|mathscr)'
+        r'\{([^{}]*)\}'
+    )
+    _RE_FONT_TOKEN = re.compile(r'\\[A-Za-z]+|\\.|\s+|.', re.DOTALL)
+
+    # Control words that are letters and so belong inside the font group
+    _FONT_GLYPH_WORDS = frozenset((
+        "alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta "
+        "iota kappa lambda mu nu xi pi varpi rho varrho sigma varsigma tau "
+        "upsilon phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi "
+        "Sigma Upsilon Phi Psi Omega ell imath jmath hbar"
+    ).split())
+
+    # Operators, relations and spacing that Word's font runs sweep into the
+    # group; they are moved outside it
+    _FONT_OPERATOR_WORDS = frozenset((
+        "in notin ni subset subseteq supset supseteq rightarrow leftarrow "
+        "Rightarrow Leftarrow leftrightarrow to mapsto leq geq le ge neq ne "
+        "times cdot bullet circ pm mp forall exists cup cap setminus wedge "
+        "vee land lor oplus otimes approx equiv sim cong propto quad qquad "
+        "ldots cdots dots"
+    ).split())
+    _FONT_OPERATOR_CHARS = frozenset("+-=<>,;:.()[]|'!/*")
+
+    @classmethod
+    def _split_font_group(cls, match: re.Match) -> str:
+        r"""Move operators out of a math-alphabet group, keeping its letters.
+
+        Word applies a font (double-struck, script, fraktur, bold) to a run of
+        characters, and the run often takes in the operators beside the
+        letter: ``\mathbb{\in R,\ }`` for "∈ ℝ, ". The group is then a single
+        ordinary atom, so the relation loses its spacing and the source hides
+        what is set in the font. Rewritten: ``\in \mathbb{R},\ ``.
+
+        Groups holding only letters, only operators, or anything unrecognised
+        are left unchanged.
+        """
+        font, body = match.group(1), match.group(2)
+        tokens = cls._RE_FONT_TOKEN.findall(body)
+
+        kinds = []
+        for tok in tokens:
+            if tok.isspace():
+                kinds.append("space")
+            elif tok.startswith("\\") and tok[1:].isalpha():
+                word = tok[1:]
+                if word in cls._FONT_GLYPH_WORDS:
+                    kinds.append("glyph")
+                elif word in cls._FONT_OPERATOR_WORDS:
+                    kinds.append("op")
+                else:
+                    return match.group(0)
+            elif tok.startswith("\\"):
+                kinds.append("op")  # control symbols: \  \, \; \! \# \{ \} \|
+            elif tok.isalnum():
+                kinds.append("glyph")
+            elif tok in cls._FONT_OPERATOR_CHARS:
+                kinds.append("op")
+            else:
+                return match.group(0)
+
+        if "glyph" not in kinds or "op" not in kinds:
+            return match.group(0)
+
+        out = []
+        run = []  # glyph tokens (with the spaces between them) awaiting a group
+        pending_space = []
+        for tok, kind in zip(tokens, kinds):
+            if kind == "glyph":
+                if run:
+                    run.extend(pending_space)
+                else:
+                    out.extend(pending_space)
+                pending_space = []
+                run.append(tok)
+            elif kind == "space":
+                pending_space.append(tok)
+            else:
+                if run:
+                    out.append(f"\\{font}{{{''.join(run)}}}")
+                    run = []
+                out.extend(pending_space)
+                pending_space = []
+                out.append(tok)
+        if run:
+            out.append(f"\\{font}{{{''.join(run)}}}")
+        out.extend(pending_space)
+
+        result = "".join(out)
+        # A trailing control word must not fuse with a letter that follows
+        # the group: \mathfrak{g \times}x -> \mathfrak{g} \times x
+        rest = match.string[match.end():match.end() + 1]
+        if re.search(r"\\[A-Za-z]+$", result) and rest.isalpha():
+            result += " "
+        return result
 
     @staticmethod
     def _clean_latex(content: str) -> str:
@@ -529,12 +635,23 @@ class MathExtractor:
             content = content.rstrip().rstrip("\\").rstrip()
             limit -= 1
 
+        # Move operators (and a swallowed number separator \#) out of font groups
+        content = MathExtractor._RE_FONT_GROUP.sub(
+            MathExtractor._split_font_group, content
+        )
+        content = re.sub(
+            r'\\math(?:bb|bf|cal|frak|rm|it|sf|scr)\{([,.;:\s]*\\#)\s*\}', r'\1', content
+        )
+        content = MathExtractor._RE_EQ_NUMBER_LEFT_RIGHT.sub(r'\1(\2)', content)
+
         # Extract equation numbers and place \tag at the very end of content
         # so it sits at the outer math level (not inside array/aligned blocks)
         last_number = None
         for m in MathExtractor._RE_EQ_NUMBER.finditer(content):
             last_number = m.group(1)
         content = MathExtractor._RE_EQ_NUMBER.sub("", content)
+        # A separator with no number after it: drop it
+        content = MathExtractor._RE_EMPTY_EQ_NUMBER.sub("", content)
         if last_number:
             content = content.rstrip() + f" \\tag{{{last_number}}}"
 

@@ -175,6 +175,77 @@ class TestCleanLatex:
         assert r"\tag{1.6.22}" in result
         assert "#(1.6" not in result
 
+    def test_equation_number_inside_font_group(self, extractor):
+        r"""Word's font run swallows the separator: \mathbf{\#}(1.2.187)."""
+        result = extractor._clean_latex(r"a \right),\mathbf{\#}(1.2.187)")
+        assert result.endswith(r"\tag{1.2.187}")
+        assert "#" not in result
+
+    def test_equation_number_with_punctuation_in_font_group(self, extractor):
+        r"""\mathbf{,\#}(1.3.384): punctuation and separator unwrapped."""
+        result = extractor._clean_latex(r"v\mathbf{F}_{1}\mathbf{,\#}(1.3.384)")
+        assert result == r"v\mathbf{F}{}_{1} \tag{1.3.384}"
+
+    def test_equation_number_inside_operator_group(self, extractor):
+        r"""\mathbb{\in R,\#}(1.2.22): letter stays in the font, number tagged."""
+        result = extractor._clean_latex(r"\alpha\mathbb{\in R,\#}(1.2.22)")
+        assert result == r"\alpha\in \mathbb{R} \tag{1.2.22}"
+
+    def test_equation_number_in_left_right(self, extractor):
+        r"""#\left( 1.7.280) \right) → \tag{1.7.280}."""
+        result = extractor._clean_latex(
+            "\\{ 5,15 \\right\\},\\#\\left( 1.7.280) \\right)\n\\end{array}"
+        )
+        assert r"\tag{1.7.280}" in result
+        assert r"\left( 1.7" not in result
+        assert "\\end{array}" in result
+
+    def test_empty_equation_number_dropped(self, extractor):
+        r"""A separator with no number after it is removed, lines kept."""
+        result = extractor._clean_latex("\\end{pmatrix}\\#\n\\end{array}")
+        assert result == "\\end{pmatrix}\n\\end{array}"
+
+    def test_hash_mid_line_kept(self, extractor):
+        r"""\# followed by more content on the line is not a separator."""
+        assert extractor._clean_latex(r"\#A = 3") == r"\#A = 3"
+
+
+class TestSplitFontGroup:
+    """Operators swept into a math-alphabet group by Word's font runs."""
+
+    def test_relation_moved_out(self, extractor):
+        assert extractor._clean_latex(r"n\mathbb{\in N}") == r"n\in \mathbb{N}"
+
+    def test_trailing_punctuation_and_space_moved_out(self, extractor):
+        assert extractor._clean_latex(r"x\mathbb{\in R,\ }y") == r"x\in \mathbb{R},\ y"
+
+    def test_binary_operator_between_letters(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{k + 1}") == r"\mathbf{k} + \mathbf{1}"
+
+    def test_leading_operator(self, extractor):
+        assert extractor._clean_latex(r"\gamma\mathcal{+ R}") == r"\gamma+ \mathcal{R}"
+
+    def test_multiletter_run_kept_together(self, extractor):
+        assert extractor._clean_latex(r"\mathfrak{\times su}") == r"\times \mathfrak{su}"
+
+    def test_greek_letter_stays_inside(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{\lambda =}") == r"\mathbf{\lambda} ="
+
+    def test_trailing_control_word_does_not_fuse(self, extractor):
+        assert extractor._clean_latex(r"\mathfrak{g \times}x") == r"\mathfrak{g} \times x"
+
+    def test_letters_only_unchanged(self, extractor):
+        assert extractor._clean_latex(r"\mathbb{C} + \mathcal{L}") == r"\mathbb{C} + \mathcal{L}"
+
+    def test_operator_only_unchanged(self, extractor):
+        assert extractor._clean_latex(r"a \mathbf{+} b") == r"a \mathbf{+} b"
+
+    def test_unknown_command_unchanged(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{\nabla f =}") == r"\mathbf{\nabla f =}"
+
+    def test_nested_braces_unchanged(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{x_{1} =}") == r"\mathbf{x_{1} =}"
+
 
 # -----------------------------------------------------------------------
 # _is_wide_equation tests
