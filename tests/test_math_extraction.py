@@ -205,6 +205,11 @@ class TestCleanLatex:
         result = extractor._clean_latex("\\end{pmatrix}\\#\n\\end{array}")
         assert result == "\\end{pmatrix}\n\\end{array}"
 
+    def test_empty_number_row_leaves_no_blank_line(self, extractor):
+        r"""A row holding only \# must not leave a blank line inside the display."""
+        result = extractor._clean_latex("\\begin{array}{r}\n\\#\n\\end{array}\\square")
+        assert result == "\\begin{array}{r}\n\\end{array}\\square"
+
     def test_hash_mid_line_kept(self, extractor):
         r"""\# followed by more content on the line is not a separator."""
         assert extractor._clean_latex(r"\#A = 3") == r"\#A = 3"

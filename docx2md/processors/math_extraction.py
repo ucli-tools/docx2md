@@ -653,6 +653,8 @@ class MathExtractor:
         content = MathExtractor._RE_EQ_NUMBER.sub("", content)
         # A separator with no number after it: drop it
         content = MathExtractor._RE_EMPTY_EQ_NUMBER.sub("", content)
+        # ...and any line it leaves empty: a blank line ends display math
+        content = re.sub(r"\n[ \t]*(?=\n)", "", content)
         if last_number:
             content = content.rstrip() + f" \\tag{{{last_number}}}"
 
