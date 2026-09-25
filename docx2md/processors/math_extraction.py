@@ -629,12 +629,7 @@ class MathExtractor:
         - Fix double subscripts: ``}_{`` → ``{}_{``
         - Fix double superscripts: ``}^{`` → ``{}^{``
         """
-        # Strip trailing backslash-space (pandoc artifact)
-        limit = 20
-        while limit > 0 and content.rstrip().endswith("\\"):
-            content = content.rstrip().rstrip("\\").rstrip()
-            limit -= 1
-
+        # First, so that spacing moved out of a group is stripped below.
         # Move operators (and a swallowed number separator \#) out of font groups
         content = MathExtractor._RE_FONT_GROUP.sub(
             MathExtractor._split_font_group, content
@@ -643,6 +638,12 @@ class MathExtractor:
             r'\\math(?:bb|bf|cal|frak|rm|it|sf|scr)\{([,.;:\s]*\\#)\s*\}', r'\1', content
         )
         content = MathExtractor._RE_EQ_NUMBER_LEFT_RIGHT.sub(r'\1(\2)', content)
+
+        # Strip trailing backslash-space (pandoc artifact)
+        limit = 20
+        while limit > 0 and content.rstrip().endswith("\\"):
+            content = content.rstrip().rstrip("\\").rstrip()
+            limit -= 1
 
         # Extract equation numbers and place \tag at the very end of content
         # so it sits at the outer math level (not inside array/aligned blocks)

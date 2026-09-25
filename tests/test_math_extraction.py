@@ -240,6 +240,10 @@ class TestSplitFontGroup:
     def test_operator_only_unchanged(self, extractor):
         assert extractor._clean_latex(r"a \mathbf{+} b") == r"a \mathbf{+} b"
 
+    def test_trailing_space_moved_out_is_stripped(self, extractor):
+        r"""\mathfrak{g\ } at the end: no bare backslash may meet the closing $."""
+        assert extractor._clean_latex(r"\mathfrak{g\ }") == r"\mathfrak{g}"
+
     def test_unknown_command_unchanged(self, extractor):
         assert extractor._clean_latex(r"\mathbf{\nabla f =}") == r"\mathbf{\nabla f =}"
 
