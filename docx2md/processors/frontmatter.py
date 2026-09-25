@@ -140,6 +140,13 @@ def generate_yaml_frontmatter(
     # ---- Config overrides ----
     overrides = dict(fm_cfg.get('mdtexpdf', {}))
 
+    # Lowercase double-struck letters are set with bbm's \mathbbm
+    if '\\mathbbm{' in content:
+        includes = list(overrides.get('header-includes', []))
+        if '\\usepackage{bbm}' not in includes:
+            includes.append('\\usepackage{bbm}')
+        overrides['header-includes'] = includes
+
     # ---- Detect body front matter headings ----
     has_body_frontmatter = {
         'dedication': bool(re.search(r'^# Dedication\s*$', content, re.MULTILINE)),

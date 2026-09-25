@@ -547,6 +547,31 @@ class MathExtractor:
     ).split())
     _FONT_OPERATOR_CHARS = frozenset("+-=<>,;:.()[]|'!/*")
 
+    # Greek capitals drawn like Latin letters have no TeX command, and the
+    # math fonts carry no glyph for the Unicode ones; Word's math font sets
+    # them upright
+    _GREEK_LATIN_CAPITALS = {
+        "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K",
+        "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X",
+    }
+    # amsfonts' \mathbb has capitals only; lowercase needs bbm's \mathbbm
+    _RE_LOWER_MATHBB = re.compile(r"\\mathbb\{([a-z]+)\}")
+
+    @classmethod
+    def _fix_math_glyphs(cls, content: str) -> str:
+        r"""Replace characters that would print as nothing in the PDF.
+
+        - Greek capital lookalikes: ``Κ`` -> ``\mathrm{K}``
+        - pandoc's harpoon accent ``\overset{⃑}{E}`` (U+20D1, a combining
+          mark) -> ``\overset{\rightharpoonup}{E}``
+        - lowercase double-struck ``\mathbb{c}`` -> ``\mathbbm{c}`` (the
+          front matter then loads bbm)
+        """
+        for greek, latin in cls._GREEK_LATIN_CAPITALS.items():
+            content = content.replace(greek, f"\\mathrm{{{latin}}}")
+        content = content.replace("\\overset{\u20d1}", "\\overset{\\rightharpoonup}")
+        return cls._RE_LOWER_MATHBB.sub(r"\\mathbbm{\1}", content)
+
     @classmethod
     def _split_font_group(cls, match: re.Match) -> str:
         r"""Move operators out of a math-alphabet group, keeping its letters.
@@ -669,6 +694,10 @@ class MathExtractor:
         # Double subscript/superscript fix
         content = content.replace("}_{", "}{}_{")
         content = content.replace("}^{", "}{}^{")
+
+        # Characters the LaTeX math fonts cannot set (after the fix above,
+        # which would read the \mathrm{K}_{m} it produces as a double subscript)
+        content = MathExtractor._fix_math_glyphs(content)
 
         return content.strip()
 

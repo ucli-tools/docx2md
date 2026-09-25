@@ -33,6 +33,14 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
     # Title extraction
     # ------------------------------------------------------------------
 
+    def test_bbm_loaded_for_lowercase_double_struck(self):
+        fm, _ = self._gen(content="Text $D_{3\\mathbbm{c}}$ here.")
+        self.assertIn("\\usepackage{bbm}", _parse_yaml(fm)["header-includes"])
+
+    def test_no_bbm_without_lowercase_double_struck(self):
+        fm, _ = self._gen(content="Text $\\mathbb{C}$ here.")
+        self.assertNotIn("header-includes", _parse_yaml(fm))
+
     def test_title_from_doc_properties(self):
         fm_str, _ = self._gen(doc_props={"title": "My Title"})
         fm = _parse_yaml(fm_str)

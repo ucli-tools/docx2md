@@ -215,6 +215,25 @@ class TestCleanLatex:
         assert extractor._clean_latex(r"\#A = 3") == r"\#A = 3"
 
 
+class TestMathGlyphs:
+    """Characters the LaTeX math fonts cannot set."""
+
+    def test_greek_capital_lookalike(self, extractor):
+        assert extractor._clean_latex("Κ_{m} + Α") == r"\mathrm{K}_{m} + \mathrm{A}"
+
+    def test_greek_capital_with_command_untouched(self, extractor):
+        assert extractor._clean_latex(r"\Delta x") == r"\Delta x"
+
+    def test_harpoon_accent(self, extractor):
+        assert extractor._clean_latex("\\overset{\u20d1}{E}") == r"\overset{\rightharpoonup}{E}"
+
+    def test_lowercase_mathbb(self, extractor):
+        assert extractor._clean_latex(r"D_{3\mathbb{c}}") == r"D_{3\mathbbm{c}}"
+
+    def test_uppercase_mathbb_untouched(self, extractor):
+        assert extractor._clean_latex(r"\mathbb{C}") == r"\mathbb{C}"
+
+
 class TestSplitFontGroup:
     """Operators swept into a math-alphabet group by Word's font runs."""
 
