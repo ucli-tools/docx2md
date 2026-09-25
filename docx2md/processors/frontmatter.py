@@ -153,6 +153,9 @@ def generate_yaml_frontmatter(
         includes = list(overrides.get('header-includes', []))
         includes += [inc for inc in needed if inc not in includes]
         overrides['header-includes'] = includes
+    # Word's index entries became [index:...] markers: build the index
+    if '[index:' in content and 'index' not in overrides:
+        overrides['index'] = True
 
     # ---- Detect body front matter headings ----
     has_body_frontmatter = {

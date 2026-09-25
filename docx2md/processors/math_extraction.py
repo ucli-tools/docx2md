@@ -45,6 +45,8 @@ class MathExtractor:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
+        # Word index entries (XE fields) found in phase 1, spliced in phase 3
+        self._index_fields: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -95,8 +97,10 @@ class MathExtractor:
 
             # Phase 3: splice equations back into markdown
             markdown = self._splice(markdown, eq_latex, equations)
+            markdown = self._splice_index(markdown, eq_latex)
 
         stats = {
+            "index_entries": len(self._index_fields),
             "math_equations_extracted": len(equations),
             "math_display_count": sum(
                 1 for e in equations if e["kind"] == "display"
@@ -136,6 +140,12 @@ class MathExtractor:
         for parent in root.iter():
             for child in parent:
                 parent_map[child] = parent
+
+        # Word index entries become [index:...] markers (their math is
+        # converted with the other equations, below)
+        self._index_fields = []
+        if self.config.get("processing", {}).get("index_entries", True):
+            self._index_fields = self._collect_index_fields(root, parent_map)
 
         # Math inside a field instruction (an XE index entry, a TC entry) is
         # part of the hidden field code, not of the text: drop it
@@ -203,6 +213,22 @@ class MathExtractor:
 
             idx += 1
 
+        # Math inside index terms: converted in the same batch, spliced into
+        # the [index:...] markers (never into the text)
+        for field in self._index_fields:
+            for k, part in enumerate(field["parts"]):
+                if isinstance(part, str):
+                    continue
+                equations.append({
+                    "idx": idx,
+                    "kind": "inline",
+                    "xml": ET.tostring(part, encoding="unicode"),
+                    "placeholder": f"@@MATH_INDEX_{idx:04d}@@",
+                })
+                plain = "".join(t.text or "" for t in part.iter(f"{_NS_M}t"))
+                field["parts"][k] = ("math", idx, plain)
+                idx += 1
+
         # Write modified XML back
         tree.write(doc_xml_path, xml_declaration=True, encoding="UTF-8")
 
@@ -246,6 +272,163 @@ class MathExtractor:
             return False
 
         return [el for el in found if not inside_chosen(el)]
+
+    # ------------------------------------------------------------------
+    # Word index entries (XE fields)
+    # ------------------------------------------------------------------
+
+    def _collect_index_fields(
+        self, root: ET.Element, parent_map: Dict[ET.Element, ET.Element]
+    ) -> List[Dict[str, Any]]:
+        """Find XE fields and leave a text placeholder where each one ends.
+
+        Each returned field has ``placeholder`` and ``parts``: the pieces of
+        its instruction in order, strings from ``w:instrText`` and ``m:oMath``
+        elements for math typed into the term.
+        """
+        fields: List[Dict[str, Any]] = []
+        stack: List[Dict[str, Any]] = []
+        for el in list(root.iter()):
+            if el.tag == f"{_NS_W}fldChar":
+                kind = el.get(f"{_NS_W}fldCharType")
+                if kind == "begin":
+                    stack.append({"state": "instruction", "parts": []})
+                elif kind == "separate" and stack:
+                    stack[-1]["state"] = "result"
+                elif kind == "end" and stack:
+                    field = stack.pop()
+                    code = "".join(p for p in field["parts"] if isinstance(p, str))
+                    if code.lstrip().startswith("XE"):
+                        field["end"] = el
+                        fields.append(field)
+            elif stack and stack[-1]["state"] == "instruction":
+                if el.tag == f"{_NS_W}instrText":
+                    stack[-1]["parts"].append(el.text or "")
+                elif (el.tag == f"{_NS_M}oMath"
+                      and parent_map.get(el) is not None
+                      and parent_map[el].tag != f"{_NS_M}oMathPara"):
+                    stack[-1]["parts"].append(el)
+
+        for n, field in enumerate(fields):
+            field["placeholder"] = f"@@INDEX_{n:04d}@@"
+            anchor = parent_map.get(field.pop("end"))
+            # A field typed inside an equation ends inside it; pandoc's math
+            # reader skips text runs there, so anchor after the equation
+            node = anchor
+            while node is not None:
+                if node.tag.startswith(_NS_M):
+                    anchor = node
+                node = parent_map.get(node)
+            container = parent_map.get(anchor) if anchor is not None else None
+            if container is None:
+                continue
+            run = create_text_run(field["placeholder"], _NS_W)
+            container.insert(list(container).index(anchor) + 1, run)
+            parent_map[run] = container
+        return fields
+
+    _RE_INDEX_MATH = re.compile("\x00(\\d+)\x00")
+
+    @classmethod
+    def _index_level(
+        cls, level: str, eq_latex: Dict[int, str], plain: Dict[int, str],
+        for_sort: bool,
+    ) -> str:
+        """One level of an index term, with its math as $LaTeX$ or plain text."""
+        out = []
+        for k, piece in enumerate(cls._RE_INDEX_MATH.split(level)):
+            if k % 2 == 0:
+                # Text. "|" separates levels in a marker and "@" sort key from
+                # display; brackets would end the marker; "*" would start
+                # emphasis. makeindex quoting is left to the renderer, after
+                # the Markdown is parsed.
+                out.append(piece.replace("|", "/").replace("@", " at ")
+                           .replace("[", "(").replace("]", ")").replace("*", "\\*"))
+                continue
+            idx = int(piece)
+            if for_sort:
+                out.append(plain.get(idx, "").replace("|", "/").replace("@", " at "))
+                continue
+            latex = (eq_latex.get(idx) or "").strip()
+            if not latex:
+                continue
+            if cls._is_text_letter(latex):
+                out.append(latex)
+                continue
+            latex = (latex.replace("[", "\\lbrack ").replace("]", "\\rbrack ")
+                     .replace("|", "\\vert "))
+            out.append("$" + latex + "$")
+        return re.sub(r"\s+", " ", "".join(out)).strip()
+
+    @classmethod
+    def _index_marker(cls, field: Dict[str, Any], eq_latex: Dict[int, str]) -> str:
+        r"""``XE "main:sub"`` -> ``[index:main|sub]``; math levels get sort@display."""
+        code = "".join(
+            p if isinstance(p, str) else f"\x00{p[1]}\x00" for p in field["parts"]
+        )
+        # Straight or curly quotes: a Word typo opens a term with “
+        m = re.match(r'\s*XE\s+["\u201c\u201d](.*?)["\u201c\u201d](?=\s|\\|$)', code, re.S)
+        if not m:
+            return ""
+        plain = {p[1]: p[2] for p in field["parts"] if not isinstance(p, str)}
+        term = m.group(1).replace("\\:", "\x01")
+        levels = []
+        for level in term.split(":"):
+            level = level.replace("\x01", ":").strip()
+            if not level:
+                continue
+            display = cls._index_level(level, eq_latex, plain, for_sort=False)
+            if cls._RE_INDEX_MATH.search(level):
+                sort = cls._index_level(level, eq_latex, plain, for_sort=True)
+                if sort and display:
+                    display = f"{sort}@{display}"
+            if display:
+                levels.append(display)
+        if not levels:
+            return ""
+        return "[index:" + "|".join(levels) + "]"
+
+    def _splice_index(self, markdown: str, eq_latex: Dict[int, str]) -> str:
+        """Put the index markers in place and drop Word's printed index."""
+        if not self._index_fields:
+            return markdown
+        for field in self._index_fields:
+            markdown = markdown.replace(
+                field["placeholder"], self._index_marker(field, eq_latex)
+            )
+
+        lines = markdown.split("\n")
+        # A marker in a heading moves to the start of the section's first
+        # paragraph: \index inside a sectioning command is fragile
+        pending: List[str] = []
+        for i, line in enumerate(lines):
+            if line.startswith("#"):
+                found = re.findall(r"\[index:[^\]]*\]", line)
+                if found:
+                    pending += found
+                    lines[i] = re.sub(r"\[index:[^\]]*\]", "", line).rstrip()
+            elif (pending and line.strip()
+                  and not line.lstrip().startswith(("$$", "```", "!", "|", ">", "\\["))):
+                # After a list bullet, never before it
+                bullet = re.match(r"\s*(?:[-+*]|\d+[.)])\s+", line)
+                cut = bullet.end() if bullet else 0
+                lines[i] = line[:cut] + "".join(pending) + line[cut:]
+                pending = []
+        markdown = "\n".join(lines)
+
+        # "[index:x](" would read as a link: move the markers (a run of them
+        # together, never splitting it) past that word
+        markdown = re.sub(
+            r"((?:\[index:[^\]]*\])+)((?!\[index:)[(\[{]\S*)", r"\2\1", markdown
+        )
+
+        # Word's printed index, with Word's page numbers, gives way to the
+        # index built from the markers
+        markdown = re.sub(
+            r"^# +\**Index\**(?:[ \t]+\{[^}\n]*\})?[ \t]*\n.*?(?=^#{1,2} |^\[\^|\Z)", "", markdown,
+            count=1, flags=re.M | re.S,
+        )
+        return markdown
 
     # ------------------------------------------------------------------
     # Phase 2a: pandoc on structure-only docx
@@ -617,7 +800,31 @@ class MathExtractor:
             content = content.replace(greek, f"\\mathrm{{{latin}}}")
         content = content.replace("\\overset{\u20d1}", "\\overset{\\rightharpoonup}")
         content = cls._fix_group_braces(content)
+        content = cls._RE_MATHBF_GROUP.sub(cls._bold_greek, content)
         return cls._RE_LOWER_MATHBB.sub(r"\\mathbbm{\1}", content)
+
+    # Capital Greek in \mathbf is taken from the bold text font at its old
+    # 7-bit slots (Delta is 1, Omega 10): a Unicode font has only control
+    # characters there, and the letter prints as nothing
+    _RE_UPPER_GREEK = re.compile(
+        r"(\\(?:Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega)(?![A-Za-z]))"
+    )
+    _RE_MATHBF_GROUP = re.compile(r"\\mathbf\{([^{}]*)\}")
+
+    @classmethod
+    def _bold_greek(cls, match: re.Match) -> str:
+        r"""``\mathbf{\Delta}`` -> ``\boldsymbol{\Delta}``, letters kept in ``\mathbf``."""
+        if not cls._RE_UPPER_GREEK.search(match.group(1)):
+            return match.group(0)
+        out = []
+        for piece in cls._RE_UPPER_GREEK.split(match.group(1)):
+            if cls._RE_UPPER_GREEK.fullmatch(piece):
+                out.append("\\boldsymbol{" + piece + "}")
+            elif piece.strip():
+                out.append("\\mathbf{" + piece + "}")
+            else:
+                out.append(piece)
+        return "".join(out)
 
     # pandoc sets Word's grouping brace (a groupChr) as a character over or
     # under the group: \overset{X}{︸} is X with a brace beneath it

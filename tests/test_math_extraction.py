@@ -246,6 +246,15 @@ class TestTextLetterAndBraces:
         equations = [{"idx": 0, "kind": "inline", "xml": "", "placeholder": "@@MATH_INLINE_0000@@"}]
         assert extractor._splice("a @@MATH_INLINE_0000@@ b", {0: "x"}, equations) == "a $x$ b"
 
+    def test_bold_capital_greek(self, extractor):
+        assert extractor._clean_latex(r"S^{\mathbf{\Delta}}") == r"S^{\boldsymbol{\Delta}}"
+
+    def test_bold_capital_greek_with_letters(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{\Omega x}") == r"\boldsymbol{\Omega}\mathbf{ x}"
+
+    def test_bold_lowercase_greek_untouched(self, extractor):
+        assert extractor._clean_latex(r"\mathbf{\lambda}") == r"\mathbf{\lambda}"
+
     def test_grouping_brace_below(self, extractor):
         latex = "\\underset{n}{\\overset{[X,Y]}{\ufe38}}"
         assert extractor._clean_latex(latex) == r"\underset{n}{\underbrace{[X,Y]}}"
@@ -619,11 +628,86 @@ class TestExtractMathFromDocx:
 
         sanitized, equations = extractor._extract_math_from_docx(docx_path, work_dir)
 
-        assert len(equations) == 1
+        # One equation in the text; the one in the XE term serves the index
+        kinds = sorted(e["placeholder"].split("_")[1] for e in equations)
+        assert kinds == ["INDEX", "INLINE"]
         unpack = tmp_path / "verify"
         unzip_docx(sanitized, unpack)
         doc_text = (unpack / "word" / "document.xml").read_text()
         assert "<m:oMath" not in doc_text
+
+    def _index_body(self, term_runs):
+        return (
+            "<w:p>"
+            '<w:r><w:t xml:space="preserve">Word</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            + term_runs +
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:r><w:t xml:space="preserve"> after.</w:t></w:r>'
+            "</w:p>"
+        )
+
+    def test_index_entry_becomes_placeholder(self, tmp_path, extractor):
+        body = self._index_body(
+            '<w:r><w:instrText xml:space="preserve"> XE "matrix groups:closure" </w:instrText></w:r>'
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        sanitized, _ = extractor._extract_math_from_docx(docx_path, work_dir)
+        assert len(extractor._index_fields) == 1
+        unpack = tmp_path / "verify"
+        unzip_docx(sanitized, unpack)
+        assert "@@INDEX_0000@@" in (unpack / "word" / "document.xml").read_text()
+        marker = extractor._index_marker(extractor._index_fields[0], {})
+        assert marker == "[index:matrix groups|closure]"
+
+    def test_index_entry_math_gets_sort_key(self, tmp_path, extractor):
+        body = self._index_body(
+            '<w:r><w:instrText xml:space="preserve"> XE "matrix groups:special linear group, </w:instrText></w:r>'
+            '<m:oMath><m:r><m:t>SL(n,F)</m:t></m:r></m:oMath>'
+            '<w:r><w:instrText xml:space="preserve">" </w:instrText></w:r>'
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        _, equations = extractor._extract_math_from_docx(docx_path, work_dir)
+        math_idx = [e["idx"] for e in equations if e["placeholder"].startswith("@@MATH_INDEX_")]
+        assert len(math_idx) == 1
+        marker = extractor._index_marker(extractor._index_fields[0], {math_idx[0]: "SL(n,F)"})
+        assert marker == (
+            "[index:matrix groups|special linear group, SL(n,F)"
+            "@special linear group, $SL(n,F)$]"
+        )
+
+    def test_adjacent_markers_stay_whole(self, extractor):
+        extractor._index_fields = [
+            {"placeholder": "@@INDEX_0000@@", "parts": [' XE "magnetic field" ']},
+            {"placeholder": "@@INDEX_0001@@", "parts": [' XE "magnetic field, B" ']},
+        ]
+        result = extractor._splice_index("the field@@INDEX_0000@@@@INDEX_0001@@. Next", {})
+        assert result == "the field[index:magnetic field][index:magnetic field, B]. Next"
+
+    def test_markers_before_parenthesis_moved_past_it(self, extractor):
+        extractor._index_fields = [
+            {"placeholder": "@@INDEX_0000@@", "parts": [' XE "a" ']},
+            {"placeholder": "@@INDEX_0001@@", "parts": [' XE "b" ']},
+        ]
+        result = extractor._splice_index("word@@INDEX_0000@@@@INDEX_0001@@(x), more", {})
+        assert result == "word(x),[index:a][index:b] more"
+
+    def test_word_index_replaced_and_heading_markers_moved(self, extractor):
+        extractor._index_fields = [{"placeholder": "@@INDEX_0000@@",
+                                    "parts": [' XE "cones" ']}]
+        md = (
+            "## 1.2 Cones@@INDEX_0000@@\n\n- The cone is a surface.\n\n"
+            "# Index\n\n*cones, 12*\n\n[^1]: A note."
+        )
+        result = extractor._splice_index(md, {})
+        assert "## 1.2 Cones\n" in result
+        assert "- [index:cones]The cone is a surface." in result
+        assert "# Index" not in result and "cones, 12" not in result
+        assert "[^1]: A note." in result
 
     def test_math_in_field_result_kept(self, tmp_path, extractor):
         """Math after a field's separate mark is its visible result."""

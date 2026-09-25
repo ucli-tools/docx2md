@@ -41,6 +41,10 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
         fm, _ = self._gen(content="Text.\n\n![Figure 1](./img/a.png)\n")
         self.assertIn("\\floatplacement{figure}{H}", _parse_yaml(fm)["header-includes"])
 
+    def test_index_enabled_when_markers_present(self):
+        fm, _ = self._gen(content="The cone[index:cones] is a surface.")
+        self.assertIs(_parse_yaml(fm)["index"], True)
+
     def test_no_bbm_without_lowercase_double_struck(self):
         fm, _ = self._gen(content="Text $\\mathbb{C}$ here.")
         self.assertNotIn("header-includes", _parse_yaml(fm))
