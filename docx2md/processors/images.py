@@ -277,13 +277,10 @@ def extract_and_process_images(
         content
     )
     
-    # Remove width and height attributes from image tags
-    # This handles various image extensions and attribute orders
-    content = re.sub(
-        r'(!\[.*?\]\(.*?\.(png|jpg|jpeg|gif|svg)\))\{(?:width|height)=".*?"(?:\s+(?:width|height)=".*?")?\}',
-        r'\1',
-        content
-    )
+    # Remove width and height attributes from image tags (a title page's
+    # logo keeps its own)
+    from docx2md.processors.cleanup import strip_image_sizes
+    content = strip_image_sizes(content)
     
     # Write the output file
     if not write_file(output_file, content):

@@ -152,9 +152,10 @@ _EMPTY_BRACKETS = re.compile(r'^\[\]\s*$', re.MULTILINE)
 # Matches {#word-id} optionally followed by class attributes like .unnumbered
 _HEADING_ID = re.compile(r'\{#[a-zA-Z0-9_-]+([^}]*)\}')
 
-# Image with size attributes: ![alt](path){width="..." height="..."}
+# Image with size attributes: ![alt](path){width="..." height="..."} (the
+# alt text may hold a bracketed [index:...] marker)
 _IMAGE_SIZE_ATTRS = re.compile(
-    r'(!\[[^\]]*\]\([^)]+\))\{(?:width|height)="[^"]*"(?:\s+(?:width|height)="[^"]*")?\}',
+    r'(!\[(?:[^\[\]]|\[[^\]]*\])*\]\([^)]+\))\{(?:width|height)="[^"]*"(?:\s+(?:width|height)="[^"]*")?\}',
 )
 
 # Image markdown reference: ![alt](path)
@@ -205,7 +206,7 @@ class WordCleanupProcessor(BaseProcessor):
         if self.strip_heading_ids:
             content = _strip_heading_ids(content)
         if self.remove_image_attrs:
-            content = _IMAGE_SIZE_ATTRS.sub(r'\1', content)
+            content = strip_image_sizes(content)
         if self.fix_image_paths:
             content = _fix_image_paths(content, self.output_dir)
         # Strip empty headings (## with no text) — Word section break artifacts
@@ -213,6 +214,20 @@ class WordCleanupProcessor(BaseProcessor):
         # Strip empty bracket artifacts [] on standalone lines
         content = _EMPTY_BRACKETS.sub('', content)
         return content
+
+
+def strip_image_sizes(content: str) -> str:
+    """Drop Word's image sizes: figures take the text width.
+
+    An image on the pages before the first heading (a publisher's logo on
+    the title page) keeps the size Word gave it. Those pages may already
+    carry their own headings (# Title Page, # Dedication, ...).
+    """
+    first = re.search(
+        r'^#{1,2} (?!(?:Title Page|Dedication|Epigraph|Copyright Page)\s*$)',
+        content, re.MULTILINE)
+    start = first.start() if first else 0
+    return content[:start] + _IMAGE_SIZE_ATTRS.sub(r'\1', content[start:])
 
 
 def _remove_toc(content: str) -> str:

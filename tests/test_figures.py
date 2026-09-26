@@ -121,3 +121,15 @@ class TestFigureProcessor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_side_by_side_images_keep_their_caption():
+    from docx2md.processors.figures import FigureProcessor
+    content = (
+        "![a](img/1.png) ![b](img/2.png)\n\n"
+        "***Figure 1.6.8 --*** *real-valued (left), and imaginary-valued (right).*\n\n"
+        "Text."
+    )
+    out = FigureProcessor().process(content)
+    assert "![](img/1.png) ![](img/2.png)" in out
+    assert "*Figure 1.6.8 -- real-valued (left), and imaginary-valued (right).*" in out

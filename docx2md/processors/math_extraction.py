@@ -150,6 +150,9 @@ class MathExtractor:
         if self.config.get("processing", {}).get("index_entries", True):
             self._index_fields = self._collect_index_fields(root, parent_map)
 
+        if self.config.get("processing", {}).get("front_matter_sizes", True):
+            self._mark_front_matter_sizes(root, unpack_dir / "word" / "styles.xml")
+
         # Math inside a field instruction (an XE index entry, a TC entry) is
         # part of the hidden field code, not of the text: drop it
         for math_el in self._math_in_field_instructions(root, parent_map):
@@ -159,6 +162,43 @@ class MathExtractor:
 
         equations: List[Dict[str, Any]] = []
         idx = 0
+
+        # A footnote mark Word placed inside an equation is text, not math:
+        # it follows the equation's placeholder, or the note is lost
+        notes_after: Dict[ET.Element, List[ET.Element]] = {}
+        for math_el in list(root.iter(f"{_NS_M}oMathPara")) + list(root.iter(f"{_NS_M}oMath")):
+            if parent_map.get(math_el) is None:
+                continue
+            owner = math_el
+            ancestor = parent_map.get(math_el)
+            while ancestor is not None:
+                if ancestor.tag == f"{_NS_M}oMathPara":
+                    owner = ancestor
+                ancestor = parent_map.get(ancestor)
+            for run in [r for r in math_el.iter() if r.tag in (f"{_NS_W}r", f"{_NS_M}r")]:
+                refs = [c for c in run if c.tag in (
+                    f"{_NS_W}footnoteReference", f"{_NS_W}endnoteReference")]
+                holder = parent_map.get(run)
+                if not refs or holder is None or run not in list(holder):
+                    continue
+                holder.remove(run)
+                if run.tag == f"{_NS_M}r":
+                    # Word keeps the mark in a math run: make it a text run
+                    text_run = ET.Element(f"{_NS_W}r")
+                    rpr = run.find(f"{_NS_W}rPr")
+                    if rpr is not None:
+                        text_run.append(rpr)
+                    text_run.extend(refs)
+                    run = text_run
+                notes_after.setdefault(owner, []).append(run)
+
+        def place_notes(math_el: ET.Element, placeholder_run: ET.Element) -> None:
+            runs = notes_after.get(math_el, [])
+            parent = parent_map[placeholder_run]
+            pos = list(parent).index(placeholder_run) + 1
+            for k, run in enumerate(runs):
+                parent.insert(pos + k, run)
+                parent_map[run] = parent
 
         # Process display equations FIRST (oMathPara contains inner oMath)
         for math_para in list(root.iter(f"{_NS_M}oMathPara")):
@@ -180,6 +220,7 @@ class MathExtractor:
                 parent.insert(pos, run)
                 # Update parent map for new element
                 parent_map[run] = parent
+                place_notes(math_para, run)
 
             idx += 1
 
@@ -215,6 +256,7 @@ class MathExtractor:
                 run = create_text_run(placeholder, _NS_W)
                 parent.insert(pos, run)
                 parent_map[run] = parent
+                place_notes(math_el, run)
 
             idx += 1
 
@@ -242,6 +284,74 @@ class MathExtractor:
         rezip_docx(unpack_dir, sanitized_path)
 
         return sanitized_path, equations
+
+    @staticmethod
+    def _mark_front_matter_sizes(root: ET.Element, styles_path: Path) -> None:
+        """Carry Word's type sizes on the pages before the first heading.
+
+        A title page states its order through size alone (title, volume,
+        author, publisher), and Markdown has no size. Each paragraph set in
+        a size other than the body text's is framed by ``@@SIZE_<pt>@@`` and
+        ``@@SIZE_END@@``, which become a sized span after pandoc.
+        """
+        style_size: Dict[str, Optional[int]] = {}
+        based_on: Dict[str, str] = {}
+        default = 20                      # Word's size when none is set
+        if styles_path.exists():
+            styles = ET.parse(styles_path).getroot()
+            sz = styles.find(f"{_NS_W}docDefaults/{_NS_W}rPrDefault/{_NS_W}rPr/{_NS_W}sz")
+            if sz is not None:
+                default = int(sz.get(f"{_NS_W}val"))
+            for st in styles.iter(f"{_NS_W}style"):
+                sid = st.get(f"{_NS_W}styleId")
+                sz = st.find(f"{_NS_W}rPr/{_NS_W}sz")
+                style_size[sid] = int(sz.get(f"{_NS_W}val")) if sz is not None else None
+                base = st.find(f"{_NS_W}basedOn")
+                if base is not None:
+                    based_on[sid] = base.get(f"{_NS_W}val")
+
+        def size_of_style(sid: Optional[str]) -> int:
+            seen = set()
+            while sid and sid not in seen:
+                seen.add(sid)
+                if style_size.get(sid):
+                    return style_size[sid]
+                sid = based_on.get(sid)
+            return default
+
+        body_size = size_of_style("Normal")
+        body = root.find(f"{_NS_W}body")
+        if body is None or not any(
+                (s.get(f"{_NS_W}val") or "").lower().startswith("heading")
+                for s in body.iter(f"{_NS_W}pStyle")):
+            return
+        for para in list(body):
+            if para.tag != f"{_NS_W}p":
+                continue                  # tables, and Word's TOC control
+            pstyle = para.find(f"{_NS_W}pPr/{_NS_W}pStyle")
+            sid = pstyle.get(f"{_NS_W}val") if pstyle is not None else "Normal"
+            if sid.lower().startswith("heading"):
+                break
+            weights: Dict[int, int] = {}
+            for run in para.iter(f"{_NS_W}r"):
+                text = "".join(t.text or "" for t in run.iter(f"{_NS_W}t"))
+                if not text.strip():
+                    continue
+                sz = run.find(f"{_NS_W}rPr/{_NS_W}sz")
+                size = int(sz.get(f"{_NS_W}val")) if sz is not None else size_of_style(sid)
+                weights[size] = weights.get(size, 0) + len(text.strip())
+            if not weights:
+                continue
+            size = max(weights, key=weights.get)
+            if size == body_size:
+                continue
+            # Frame the text only: a page break before or after it stays out
+            points = f"{size / 2:g}"
+            children = list(para)
+            with_text = [k for k, child in enumerate(children)
+                         if "".join(t.text or "" for t in child.iter(f"{_NS_W}t")).strip()]
+            para.insert(with_text[-1] + 1, create_text_run("@@SIZE_END@@", _NS_W))
+            para.insert(with_text[0], create_text_run(f"@@SIZE_{points}@@", _NS_W))
 
     @staticmethod
     def _alone_in_paragraph(
@@ -621,6 +731,12 @@ class MathExtractor:
             r"((?:\[index:[^\]]*\])+)((?!\[index:)[(\[{]\S*)", r"\2\1", markdown
         )
 
+        # Word hides the field, so it may sit inside a word ("vector" of
+        # "vectors"): the markers follow the whole word
+        markdown = re.sub(
+            r"(?<=[^\W\d_])((?:\[index:[^\]]*\])+)([^\W\d_]+)", r"\2\1", markdown
+        )
+
         # Word's printed index, with Word's page numbers, gives way to the
         # index built from the markers
         markdown = re.sub(
@@ -890,10 +1006,18 @@ class MathExtractor:
                 else:
                     replacement = f"${latex}$"
 
+            if kind == "display" and replacement.endswith("$$\n\n"):
+                # A footnote mark that ends the equation stays on its line
+                markdown = re.sub(
+                    re.escape(placeholder) + r"((?:\[\^[^\]\s]+\])*)",
+                    lambda m: replacement[:-2] + m.group(1) + "\n\n",
+                    markdown,
+                )
+                continue
             markdown = markdown.replace(placeholder, replacement)
 
         # Fix adjacent inline math: $...$$ → $...$ $ (add space)
-        markdown = re.sub(r'\$\$(?!\n)', _fix_adjacent_inline, markdown)
+        markdown = re.sub(r'(?<!\n)\$\$(?!\n)', _fix_adjacent_inline, markdown)
 
         # Collapse excessive blank lines introduced by display splicing
         markdown = re.sub(r"\n{4,}", "\n\n\n", markdown)
@@ -940,7 +1064,8 @@ class MathExtractor:
     # Uses re.MULTILINE so $ matches end-of-line (not just end-of-string),
     # catching numbers before \end{array} on the next line.
     _RE_EQ_NUMBER = re.compile(
-        r'[,.\s\\]*'           # optional leading punctuation/space/backslash
+        r'(?:\s|\\\s)*'        # spacing before the mark (a comma or period
+                               # there ends the equation's sentence: keep it)
         r'\\?#\('              # literal #( possibly with backslash escape
         r'([0-9]+(?:\.[0-9]+)*' # dotted number like 1.1.46 (capture group 1)
         r'[a-z]?)'             # optional letter suffix like 13a
@@ -1171,6 +1296,36 @@ class MathExtractor:
         return result
 
     @staticmethod
+    def _fix_double_scripts(content: str) -> str:
+        """Give a second script of the same kind its own empty base.
+
+        ``x_{1}_{2}`` is a LaTeX error, so it becomes ``x_{1}{}_{2}``. A
+        subscript followed by a superscript (``\\sum_{k=0}^{\\infty}``, the
+        limits Word sets under and over the sign) and a script after any
+        other group (``\\mathbb{C}^{3}``) are left whole: an empty group
+        there would move the script off its base.
+        """
+        inserts = []
+        i = 0
+        while i < len(content) - 1:
+            if (content[i] in "_^" and content[i + 1] == "{"
+                    and (i == 0 or content[i - 1] != "\\")):
+                close = MathExtractor._matching_brace(content, i + 1)
+                if close == -1:
+                    break
+                after = close + 1
+                while after < len(content) and content[after] == " ":
+                    after += 1
+                if after < len(content) and content[after] == content[i]:
+                    inserts.append(close + 1)
+                i += 1
+                continue
+            i += 1
+        for pos in reversed(inserts):
+            content = content[:pos] + "{}" + content[pos:]
+        return content
+
+    @staticmethod
     def _clean_latex(content: str) -> str:
         """Post-process a single LaTeX equation string.
 
@@ -1178,8 +1333,7 @@ class MathExtractor:
         - Convert equation numbers ``#(1.1.46)`` → ``\\tag{1.1.46}``
         - Fix QED markers ``\\#\\square`` → ``\\square``
         - Fix bare ``\\right`` without delimiter (add invisible ``.``)
-        - Fix double subscripts: ``}_{`` → ``{}_{``
-        - Fix double superscripts: ``}^{`` → ``{}^{``
+        - Fix double scripts: ``x_{1}_{2}`` → ``x_{1}{}_{2}``
         """
         # First, so that spacing moved out of a group is stripped below.
         # Move operators (and a swallowed number separator \#) out of font groups
@@ -1217,9 +1371,7 @@ class MathExtractor:
         # Pandoc sometimes omits the invisible . delimiter
         content = MathExtractor._RE_BARE_RIGHT.sub(r'\\right.', content)
 
-        # Double subscript/superscript fix
-        content = content.replace("}_{", "}{}_{")
-        content = content.replace("}^{", "}{}^{")
+        content = MathExtractor._fix_double_scripts(content)
 
         # Characters the LaTeX math fonts cannot set (after the fix above,
         # which would read the \mathrm{K}_{m} it produces as a double subscript)
@@ -1231,7 +1383,8 @@ class MathExtractor:
 def _fix_adjacent_inline(match: re.Match) -> str:
     """Callback for adjacent-inline-math regex.
 
-    Only fires when ``$$`` appears NOT followed by a newline (which would
-    indicate a display-math opener).  Inserts a space: ``$ $``.
+    Only fires when ``$$`` is neither followed by a newline (a display-math
+    opener) nor at the start of a line (a display-math closer, which a
+    footnote mark may follow).  Inserts a space: ``$ $``.
     """
     return "$ $"

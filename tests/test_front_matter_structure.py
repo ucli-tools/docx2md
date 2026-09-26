@@ -85,15 +85,32 @@ class TestCopyrightDetection(unittest.TestCase):
         self.assertIn('# Copyright Page', result)
 
 
-class TestTitlePageRepeatStripping(unittest.TestCase):
+class TestTitlePage(unittest.TestCase):
 
-    def test_title_and_author_stripped(self):
+    def test_title_and_author_kept_as_title_page(self):
         content = _YAML + 'My Book\n\nJane Doe\n\n# Chapter 1\n\nBody.'
         result = _proc(content)
-        # The title page repeat should be stripped
-        self.assertNotIn('My Book\n\nJane Doe', result)
+        # The document's own title page is kept, as a page of its own
+        self.assertIn('# Title Page\n\nMy Book\n\nJane Doe', result)
         self.assertIn('# Chapter 1', result)
         self.assertIn('Body.', result)
+
+    def test_word_sizes_become_sized_spans(self):
+        content = (_YAML + '@@SIZE_28@@*My Book*@@SIZE_END@@\n\n'
+                   + 'Jane Doe\n\n![](./img/logo.png){width="0.75in"}\n\n'
+                   + '@@SIZE_10@@*2023*@@SIZE_END@@\n\n# Chapter 1\n\nBody.')
+        result = _proc(content)
+        self.assertIn('[*My Book*]{size="28pt"}', result)
+        self.assertIn('[*2023*]{size="10pt"}', result)
+        self.assertIn('![](./img/logo.png){width="0.75in"}', result)
+        self.assertNotIn('@@SIZE', result)
+
+    def test_title_alone_is_a_contents_heading_stripped(self):
+        """Word's contents page opens with the title in italics: no page."""
+        content = (_YAML + 'My Book\n\nJane Doe\n\n*\\\n*\n\n'
+                   + '***My Book***\n\n# Chapter 1\n\nBody.')
+        result = _proc(content)
+        self.assertEqual(result[len(_YAML):].count('My Book'), 1)
 
     def test_title_alone_not_stripped(self):
         """If only title (no author) is found, don't strip."""
@@ -155,9 +172,9 @@ class TestCombinedScenario(unittest.TestCase):
             + '# Chapter 1: The Beginning\n\nOnce upon a time.'
         )
         result = _proc(content)
-        # Title repeat stripped
+        # Title page kept, first, as a page of its own
         lines_before_ch1 = result.split('# Chapter 1')[0]
-        self.assertNotIn('My Book\n\nJane Doe', lines_before_ch1)
+        self.assertIn('# Title Page\n\nMy Book\n\nJane Doe', lines_before_ch1)
         # Dedication present
         self.assertIn('# Dedication', result)
         self.assertIn('*To everyone who believed*', result)

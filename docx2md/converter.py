@@ -137,6 +137,11 @@ def convert_docx_to_markdown(
             doc_properties=doc_content.get("properties", {}),
         )
 
+    # Word's type sizes on the opening pages, as sized spans (the front
+    # matter step converts them itself; this catches them when it is off)
+    from docx2md.processors.front_matter_structure import apply_size_markers
+    markdown_content = apply_size_markers(markdown_content)
+
     # Step 4: Unicode → LaTeX replacement
     if processing.get("fix_unicode", True):
         proc = UnicodeFixProcessor(config)

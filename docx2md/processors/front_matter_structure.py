@@ -12,7 +12,10 @@ split on page break markers (Word section breaks converted by pandoc as
 
 - **Copyright**: contains "Copyright", "ISBN", "All rights reserved", etc.
 - **Dedication**: all-italic short paragraphs, no structural keywords
-- **Title page repeat**: contains the book title + author → stripped entirely
+- **Title page**: the book title with its author or an image (a publisher's
+  logo) → kept as ``# Title Page``, in the sizes Word set it in
+- **Title repeat**: the title alone (the heading of Word's contents page) →
+  stripped entirely
 """
 
 import re
@@ -48,6 +51,22 @@ _YAML_BLOCK = re.compile(r'\A---\n.*?\n---\n', re.DOTALL)
 # First real heading (# at level 1 or 2)
 _FIRST_HEADING = re.compile(r'^#{1,2}\s+', re.MULTILINE)
 
+# Paragraph framed by the size markers of phase 1 (math extraction), which
+# carry Word's type size where it differs from the body text
+_SIZE_MARKED = re.compile(r'@@SIZE_([0-9.]+)@@((?:(?!\n\n).)*?)@@SIZE_END@@', re.DOTALL)
+
+# A whole line set in a size of its own: [text]{size="28pt"}
+_SIZED_LINE = re.compile(r'^\[(.*)\]\{size="[^"]*"\}$')
+
+
+def apply_size_markers(content: str) -> str:
+    """Turn Word size markers into sized spans: ``[text]{size="28pt"}``."""
+    def span(m: re.Match) -> str:
+        text = m.group(2).strip()
+        return f'[{text}]{{size="{m.group(1)}pt"}}' if text else ''
+    return _SIZE_MARKED.sub(span, content)
+
+
 # Standalone "Volume X, Part Y:" line (Word title page artifact)
 _VOLUME_PART_LINE = re.compile(
     r'^\s*\*{0,3}Volume\s+[IVXLCDM]+,?\s*Part\s+\d+\s*:\s*\*{0,3}\s*$',
@@ -59,6 +78,7 @@ class FrontMatterStructureProcessor(BaseProcessor):
     """Detect and structure body front matter from converted .docx files."""
 
     def process(self, content: str, doc_properties: Optional[Dict[str, Any]] = None) -> str:
+        content = apply_size_markers(content)
         pre, heading_start = self._split_pre_heading(content)
         if not pre.strip():
             return content
@@ -87,7 +107,9 @@ class FrontMatterStructureProcessor(BaseProcessor):
         # Build replacement for the pre-heading area
         parts: List[str] = []
         for kind, text in classified:
-            if kind == 'title_repeat':
+            if kind == 'title_page':
+                parts.append(f'# Title Page\n\n{text}')
+            elif kind == 'title_repeat':
                 continue  # strip entirely
             elif kind == 'copyright':
                 parts.append(f'# Copyright Page\n\n{text}')
@@ -178,7 +200,8 @@ class FrontMatterStructureProcessor(BaseProcessor):
     def _classify(self, text: str, title: str, author: str) -> str:
         """Classify a front matter section.
 
-        Returns one of: 'copyright', 'dedication', 'title_repeat', 'unknown'.
+        Returns one of: 'copyright', 'dedication', 'title_page',
+        'title_repeat', 'unknown'.
         """
         # Copyright page: contains copyright keywords
         if _COPYRIGHT_KEYWORDS.search(text):
@@ -199,7 +222,7 @@ class FrontMatterStructureProcessor(BaseProcessor):
                     flipped = f"{parts[1].strip()} {parts[0].strip()}"
                     has_author = self._strip_accents(flipped.lower()) in text_norm
             if has_title and has_author:
-                return 'title_repeat'
+                return 'title_page'
 
         # Title fragment: contains the title, short, and all lines are
         # formatted (italic/bold) — a subtitle or volume page without author
@@ -209,7 +232,7 @@ class FrontMatterStructureProcessor(BaseProcessor):
             if (self._strip_accents(title.lower()) in text_norm
                     and len(lines) <= 5
                     and all(self._is_formatted_or_empty(line) for line in lines)):
-                return 'title_repeat'
+                return 'title_page' if _IMAGE_REF.search(text) else 'title_repeat'
 
         # Dedication: all non-empty lines are italic, no images, short
         lines = [line for line in text.split('\n') if line.strip()]
@@ -237,8 +260,16 @@ class FrontMatterStructureProcessor(BaseProcessor):
         """
         lines = content.split('\n')
 
-        # Find "Volume X, Part Y:" anchor lines
-        anchors = [i for i, line in enumerate(lines) if _VOLUME_PART_LINE.match(line)]
+        # Find "Volume X, Part Y:" anchor lines (the title page keeps its own)
+        in_title_page = set()
+        inside = False
+        for i, line in enumerate(lines):
+            if line.startswith('#'):
+                inside = line.strip() == '# Title Page'
+            if inside:
+                in_title_page.add(i)
+        anchors = [i for i, line in enumerate(lines)
+                   if _VOLUME_PART_LINE.match(line) and i not in in_title_page]
         if not anchors:
             return content
 
@@ -290,7 +321,7 @@ class FrontMatterStructureProcessor(BaseProcessor):
     @staticmethod
     def _is_italic_or_empty(line: str) -> bool:
         """Check if a line is all-italic markdown or empty."""
-        stripped = line.strip()
+        stripped = _SIZED_LINE.sub(r'\1', line.strip())
         if not stripped:
             return True
         return bool(_ITALIC_LINE.match(stripped))
@@ -298,7 +329,7 @@ class FrontMatterStructureProcessor(BaseProcessor):
     @staticmethod
     def _is_formatted_or_empty(line: str) -> bool:
         """Check if a line is italic, bold, bold-italic (possibly nested), or empty."""
-        stripped = line.strip()
+        stripped = _SIZED_LINE.sub(r'\1', line.strip())
         if not stripped:
             return True
         # Line starts with * and ends with * (covers *italic*, **bold**,

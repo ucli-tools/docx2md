@@ -32,6 +32,7 @@ _CAPTION_START = re.compile(
 
 # Matches an image reference: ![...](path)  (possibly multi-line alt text)
 _IMAGE_START = re.compile(r'^!\[')
+_IMAGE_ANY = re.compile(r'!\[')
 
 # Strips emphasis markers and collapses whitespace from caption text
 _EMPHASIS = re.compile(r'\*{1,3}(.*?)\*{1,3}', re.DOTALL)
@@ -76,9 +77,16 @@ class FigureProcessor(BaseProcessor):
                     if cap_match:
                         # Extract and clean the real caption text
                         caption_text = _extract_caption(next_block)
-                        # Replace AI alt-text in the image block with the real caption
-                        new_block = _replace_alt_text(block, caption_text)
-                        result.append(new_block)
+                        if len(_IMAGE_ANY.findall(block)) > 1:
+                            # Images side by side share one caption. pandoc
+                            # captions only an image alone in its paragraph,
+                            # so keep the images together and the caption as
+                            # its own paragraph beneath them
+                            result.append(_replace_alt_text(block, ''))
+                            result.append(f'*{caption_text}*')
+                        else:
+                            # Replace AI alt-text in the image block with the real caption
+                            result.append(_replace_alt_text(block, caption_text))
                         # Skip over any blank blocks and the caption paragraph
                         i = j + 1
                         logger.debug(f'Replaced figure caption: {caption_text[:60]}...')

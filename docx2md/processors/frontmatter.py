@@ -325,6 +325,7 @@ def generate_yaml_frontmatter(
     has_body_frontmatter = {
         'dedication': bool(re.search(r'^# Dedication\s*$', content, re.MULTILINE)),
         'copyright_page': bool(re.search(r'^# Copyright Page\s*$', content, re.MULTILINE)),
+        'title_page': bool(re.search(r'^# Title Page\s*$', content, re.MULTILINE)),
     }
 
     # ---- Build template ----
@@ -452,6 +453,10 @@ def _build_yaml_template(
         lines.append('# (detected # Dedication heading in body)')
     else:
         field('dedication', 'To whom this book is dedicated.')
+    if has_body_frontmatter.get('title_page'):
+        # The document's own title page is in the body: no second one
+        active('no_title_page', True)
+        lines.append('# (detected # Title Page heading in body)')
     field('epigraph', 'An inspiring quote.')
     field('epigraph_source', 'Author of the quote')
     field('chapters_on_recto', True, force_active=True)

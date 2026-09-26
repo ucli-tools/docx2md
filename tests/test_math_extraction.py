@@ -96,12 +96,21 @@ class TestCleanLatex:
         assert extractor._clean_latex(r"a \\ ") == "a"
 
     def test_double_subscript_fix(self, extractor):
-        result = extractor._clean_latex("x}_{1}_{2}")
-        assert result == "x}{}_{1}{}_{2}"
+        result = extractor._clean_latex("x_{1}_{2}")
+        assert result == "x_{1}{}_{2}"
 
     def test_double_superscript_fix(self, extractor):
-        result = extractor._clean_latex("x}^{1}^{2}")
-        assert result == "x}{}^{1}{}^{2}"
+        result = extractor._clean_latex("x^{1} ^{2}")
+        assert result == "x^{1}{} ^{2}"
+
+    def test_limits_stay_on_their_sign(self, extractor):
+        """Word's limits under and over a sum: a sub- then a superscript."""
+        result = extractor._clean_latex(r"\sum_{k = 0}^{\infty}\frac{1}{k!}")
+        assert result == r"\sum_{k = 0}^{\infty}\frac{1}{k!}"
+
+    def test_script_after_a_group_stays_on_it(self, extractor):
+        for latex in (r"\mathbb{C}^{3}", r"{\widehat{x}}_{j}", r"\theta_{r}^{m}"):
+            assert extractor._clean_latex(latex) == latex
 
     def test_no_change_when_clean(self, extractor):
         assert extractor._clean_latex("x^{2} + y_{1}") == "x^{2} + y_{1}"
@@ -175,6 +184,12 @@ class TestCleanLatex:
         assert r"\tag{1.6.22}" in result
         assert "#(1.6" not in result
 
+    def test_punctuation_before_equation_number_kept(self, extractor):
+        """The period or comma ending the equation's sentence stays."""
+        assert extractor._clean_latex(r"\Gamma(0) = \infty.\#(1.6.119)") == \
+            r"\Gamma(0) = \infty. \tag{1.6.119}"
+        assert extractor._clean_latex(r"x = 1,\#(1.1.6)") == r"x = 1, \tag{1.1.6}"
+
     def test_equation_number_inside_font_group(self, extractor):
         r"""Word's font run swallows the separator: \mathbf{\#}(1.2.187)."""
         result = extractor._clean_latex(r"a \right),\mathbf{\#}(1.2.187)")
@@ -184,12 +199,12 @@ class TestCleanLatex:
     def test_equation_number_with_punctuation_in_font_group(self, extractor):
         r"""\mathbf{,\#}(1.3.384): punctuation and separator unwrapped."""
         result = extractor._clean_latex(r"v\mathbf{F}_{1}\mathbf{,\#}(1.3.384)")
-        assert result == r"v\mathbf{F}{}_{1} \tag{1.3.384}"
+        assert result == r"v\mathbf{F}_{1}, \tag{1.3.384}"
 
     def test_equation_number_inside_operator_group(self, extractor):
         r"""\mathbb{\in R,\#}(1.2.22): letter stays in the font, number tagged."""
         result = extractor._clean_latex(r"\alpha\mathbb{\in R,\#}(1.2.22)")
-        assert result == r"\alpha\in \mathbb{R} \tag{1.2.22}"
+        assert result == r"\alpha\in \mathbb{R}, \tag{1.2.22}"
 
     def test_equation_number_in_left_right(self, extractor):
         r"""#\left( 1.7.280) \right) → \tag{1.7.280}."""
@@ -451,6 +466,12 @@ class TestSplice:
         md = "we find @@MATH_INLINE_0000@@which is equivalent to"
         result = extractor._splice(md, {0: "x = 1 \\tag{1.4.188}"}, equations)
         assert "\n$$\nx = 1 \\tag{1.4.188}\n$$\n" in result
+
+    def test_splice_display_keeps_its_footnote_mark(self, extractor):
+        equations = [{"idx": 0, "kind": "display", "xml": "", "placeholder": "@@MATH_DISPLAY_0000@@"}]
+        md = "properties\n\n@@MATH_DISPLAY_0000@@[^3]\n\nNext"
+        result = extractor._splice(md, {0: "x = 1."}, equations)
+        assert "$$\nx = 1.\n$$[^3]\n" in result
 
     def test_splice_inline(self, extractor):
         equations = [{"idx": 0, "kind": "inline", "placeholder": "@@MATH_INLINE_0000@@", "xml": ""}]
@@ -776,6 +797,17 @@ class TestExtractMathFromDocx:
         result = extractor._splice_index("word@@INDEX_0000@@@@INDEX_0001@@(x), more", {})
         assert result == "word(x),[index:a][index:b] more"
 
+    def test_markers_inside_a_word_follow_it(self, extractor):
+        """Word hides the field, so it may sit inside the word it marks."""
+        extractor._index_fields = [
+            {"placeholder": "@@INDEX_0000@@", "parts": [' XE "outer product" ']},
+            {"placeholder": "@@INDEX_0001@@", "parts": [' XE "Dyson, Freeman" ']},
+        ]
+        result = extractor._splice_index(
+            "the product@@INDEX_0000@@s of Freeman Dys@@INDEX_0001@@on, who", {})
+        assert result == (
+            "the products[index:outer product] of Freeman Dyson[index:Dyson, Freeman], who")
+
     def test_word_index_replaced_and_heading_markers_moved(self, extractor):
         extractor._index_fields = [{"placeholder": "@@INDEX_0000@@",
                                     "parts": [' XE "cones" ']}]
@@ -886,6 +918,35 @@ class TestExtractMathFromDocx:
         # Only 1 equation (the display), not 2
         assert len(equations) == 1
         assert equations[0]["kind"] == "display"
+
+    def test_footnote_mark_inside_equation_kept(self, tmp_path, extractor):
+        """A footnote mark Word placed inside an equation follows it."""
+        body = (
+            "<w:p>"
+            '<w:r><w:t xml:space="preserve">at </w:t></w:r>'
+            "<m:oMath><m:r><m:t>\u03f5.</m:t></m:r>"
+            '<m:r><m:rPr><m:sty m:val="p"/></m:rPr>'
+            '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+            '<w:footnoteReference w:id="9"/></m:r>'
+            "</m:oMath>"
+            '<w:r><w:t xml:space="preserve"> Next</w:t></w:r>'
+            "</w:p>"
+        )
+        docx_path = self._make_minimal_docx(tmp_path, body)
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+
+        sanitized, equations = extractor._extract_math_from_docx(docx_path, work_dir)
+
+        assert "footnoteReference" not in equations[0]["xml"]
+        unpack = tmp_path / "verify"
+        unzip_docx(sanitized, unpack)
+        doc_text = (unpack / "word" / "document.xml").read_text()
+        placeholder_at = doc_text.index("@@MATH_INLINE_0000@@")
+        note_at = doc_text.index('footnoteReference w:id="9"')
+        assert placeholder_at < note_at < doc_text.index(" Next")
+        # the mark now sits in a text run, where pandoc reads notes
+        assert re.search(r'<w:r><w:rPr>.*?</w:rPr><w:footnoteReference', doc_text)
 
 
 # -----------------------------------------------------------------------
