@@ -436,6 +436,9 @@ def _build_yaml_template(
     field('sansfont', 'DejaVu Sans')
     field('headings_sans', True)
     field('greekfont', 'Noto Serif')
+    # Math in Computer Modern's design, drawn to sit with a book-weight text
+    # face (mdtexpdf math_font; "cm" keeps the lighter original)
+    field('math_font', 'newcm-book', force_active=True)
     lines.append('')
 
     # === PROFESSIONAL BOOK FEATURES ===

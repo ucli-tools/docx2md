@@ -89,6 +89,10 @@ class TestGenerateYamlFrontmatter(unittest.TestCase):
     # Author name flipping
     # ------------------------------------------------------------------
 
+    def test_math_font_defaults_to_newcm_book(self):
+        fm_str, _ = self._gen(doc_props={})
+        self.assertEqual(_parse_yaml(fm_str)["math_font"], "newcm-book")
+
     def test_flip_last_first_author(self):
         fm_str, _ = self._gen(doc_props={"author": "Doe, Jane"})
         fm = _parse_yaml(fm_str)
