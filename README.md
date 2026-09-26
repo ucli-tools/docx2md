@@ -13,6 +13,7 @@ A powerful tool for converting Microsoft Word documents with complex mathematica
   - [Prerequisites](#prerequisites)
   - [Get Started](#get-started)
     - [Using the Makefile](#using-the-makefile)
+  - [Verifying a Conversion](#verifying-a-conversion)
   - [Troubleshooting](#troubleshooting)
     - [Common Issues](#common-issues)
     - [Logging](#logging)
@@ -33,6 +34,8 @@ This tool bridges the gap between Word documents and the Markdown+LaTeX workflow
 - **Batch Processing**: Process multiple files at once
 - **LaTeX Delimiter Fixing**: Standardizes equation delimiters
 - **Cross-Reference Handling**: Maintains document references
+- **Front Matter**: The document's own dedication, copyright page and title page become `# Dedication`, `# Copyright Page` and `# Title Page`; the title page keeps its logo and the type sizes Word set it in (`[*Title*]{size="28pt"}`)
+- **Verification**: `docx2md verify` compares the Markdown with the Word document and names anything lost or changed
 - **Modular Architecture**: Extensible for custom processing needs
 - **Robust CLI**: Git-like command structure for ease of use
 
@@ -93,6 +96,37 @@ This will:
 1. Set up a virtual environment
 2. Install the package with all dependencies
 3. Run the batch conversion on files in ./files/input and output to ./files/output
+
+## Verifying a Conversion
+
+`docx2md verify` reads the Word document's XML directly and compares it with the Markdown made from it, so a defect in the converter cannot hide itself:
+
+```bash
+docx2md verify book.docx book.md
+```
+
+| Check | What must match |
+|---|---|
+| equations | every Word equation is in the Markdown |
+| equation numbers | the set of `#(1.2.3)` numbers and the `\tag{1.2.3}` numbers |
+| punctuation before equation numbers | the comma or period that ends each numbered equation |
+| images, figure captions | every picture, and the caption under it (side-by-side pictures included) |
+| tables | every table, as pandoc reads the Markdown (pipe, grid, simple or multiline) |
+| headings | every non-empty Word heading |
+| index entries | every Word `XE` field and its `[index:...]` marker |
+| footnotes | every note mark, each with its text |
+| text | the running text, word by word (at most 0.5% of words may differ) |
+| leftovers | no converter placeholders, raw `#(n)` numbers, stray math letters, control characters, or words split by an index marker |
+
+It prints a table and each difference, and exits with status 1 when a check fails, so a build can stop there:
+
+```make
+md:
+	docx2md convert book.docx book.md
+	docx2md verify book.docx book.md
+```
+
+A failed check is a converter defect to fix in docx2md, not in the Markdown: fix it, convert again, and verify again.
 
 ## Troubleshooting
 

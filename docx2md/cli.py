@@ -245,5 +245,51 @@ def validate(input_file: str, strict: bool) -> None:
         sys.exit(1)
 
 
+@main.command()
+@click.argument("input_docx", type=click.Path(exists=True, dir_okay=False))
+@click.argument("output_md", type=click.Path(exists=True, dir_okay=False))
+def verify(input_docx: str, output_md: str) -> None:
+    """
+    Check that a Markdown file holds everything its Word document does.
+
+    Compares equations, equation numbers and the punctuation before them,
+    images, figure captions, tables, headings, index entries, footnotes and
+    running text, and reports anything lost or changed in conversion.
+
+    INPUT_DOCX: The Word document that was converted
+
+    OUTPUT_MD: The Markdown file made from it
+    """
+    from rich.table import Table
+    from docx2md.verify import verify as verify_conversion
+
+    try:
+        checks = verify_conversion(input_docx, output_md)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+        logger.error(f"Verification failed: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+    table = Table(title=f"{Path(input_docx).name} → {Path(output_md).name}")
+    table.add_column("")
+    table.add_column("Check")
+    table.add_column(".docx", justify="right")
+    table.add_column(".md", justify="right")
+    for check in checks:
+        table.add_row("✅" if check.ok else "❌", check.name, check.docx, check.md)
+    console.print(table)
+    for check in checks:
+        for detail in check.details:
+            style = "red" if not check.ok else "dim"
+            console.print(f"[{style}]{check.name}:[/{style}] {detail}")
+
+    if all(check.ok for check in checks):
+        console.print("[bold green]The Markdown holds the whole document.[/bold green]")
+    else:
+        failed = [check.name for check in checks if not check.ok]
+        console.print(f"[bold red]Lost or changed in conversion:[/bold red] {', '.join(failed)}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
