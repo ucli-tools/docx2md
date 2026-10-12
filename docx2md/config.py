@@ -40,6 +40,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "fix_delimiters": True,
         "extract_images": True,
         "process_tables": True,
+        "table_colours": True,   # keep the tables' cell backgrounds and text colours
         # New processors
         "cleanup": True,
         "fix_figures": True,

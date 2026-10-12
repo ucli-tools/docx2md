@@ -371,6 +371,12 @@ def verify(docx_path, md_path, word_tolerance: float = 0.005) -> List[Check]:
         [f'caption not shown for side-by-side images: {c}' for c in m.lost_captions]))
     checks.append(Check('tables', m.tables >= d.tables, str(d.tables), str(m.tables)))
 
+    from docx2md.processors.colours import colour_counts
+    want, got, notes = colour_counts(docx_path, Path(md_path).read_text(encoding='utf-8'))
+    checks.append(Check(
+        'table colours', got == want,
+        f'{want[0]} backgrounds, {want[1]} colours', f'{got[0]} backgrounds, {got[1]} colours', notes))
+
     md_heads = Counter(_norm_heading(h) for h in m.headings)
     missing_heads = [h for h in d.headings
                      if _norm_heading(h) and _norm_heading(h) not in md_heads

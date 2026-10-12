@@ -14,6 +14,7 @@ Pipeline order:
   6. EquationFixProcessor   — fix garbled OMML equation patterns
   7. fix_delimiters         — \\(...\\) → $...$ and \\[...\\] → $$...$$
   8. process_tables         — normalize pipe/grid tables
+     keep_table_colours     — the tables' cell backgrounds and text colours, from the .docx
   9. extract_and_process_images — optimize/rename images, fix remaining path issues
  10. generate_yaml_frontmatter  — prepend mdtexpdf YAML frontmatter
 """
@@ -194,6 +195,16 @@ def convert_docx_to_markdown(
                 header_style=config.get("tables", {}).get("header_style", "bold"),
             )
             stats.update(table_stats)
+
+        # Step 8b: the tables' colours from the Word document (cell backgrounds, text colours)
+        if processing.get("table_colours", True):
+            from docx2md.processors.colours import keep_table_colours
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            text, colour_stats = keep_table_colours(text, input_path)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            stats.update(colour_stats)
 
         # Step 9: image path cleanup / optimization
         if processing.get("extract_images", True):
