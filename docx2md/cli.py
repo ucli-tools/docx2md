@@ -291,5 +291,73 @@ def verify(input_docx: str, output_md: str) -> None:
         sys.exit(1)
 
 
+@main.command("diff")
+@click.argument("old_docx", type=click.Path(exists=True, dir_okay=False))
+@click.argument("new_docx", type=click.Path(exists=True, dir_okay=False))
+@click.option("--pdf", type=click.Path(exists=True, dir_okay=False), help="A PDF of the document, to give each change's page")
+@click.option("--output", "-o", type=click.Path(dir_okay=False), help="Write the report (Markdown) here")
+@click.option("--expect", type=int, help="Fail unless exactly this many passages changed")
+def diff_cmd(old_docx: str, new_docx: str, pdf: Optional[str], output: Optional[str], expect: Optional[int]) -> None:
+    """
+    Compare two Word documents: every difference, where it is, and the whole
+    passage before and after.
+
+    A paragraph is one passage and a table row another (its cells kept apart).
+    A change of formatting alone (a colour, a style) is a change too, and the
+    package's other parts (images, styles) are compared as well. Made to prove
+    that a correction to a book is exactly the one decided.
+
+    OLD_DOCX: The document before the change
+
+    NEW_DOCX: The document after it
+    """
+    from docx2md.compare import compare, report
+
+    cmp = compare(old_docx, new_docx)
+    text = report(cmp, old_docx, new_docx, pdf)
+    if output:
+        Path(output).write_text(text, encoding="utf-8")
+        console.print(f"Report: {output}")
+    else:
+        console.print(text, markup=False, highlight=False)
+    console.print(f"{len(cmp.changes)} passage(s) changed, added or removed; other parts that differ: {len(cmp.parts)}")
+    if expect is not None and (len(cmp.changes) != expect or cmp.parts):
+        console.print(f"[bold red]Expected exactly {expect} changed passage(s) and no other part changed.[/bold red]")
+        sys.exit(1)
+
+
+@main.command("edit")
+@click.argument("input_docx", type=click.Path(exists=True, dir_okay=False))
+@click.argument("output_docx", type=click.Path(dir_okay=False))
+@click.option("--replace", nargs=2, required=True, metavar="OLD NEW", help="The text to replace, and its replacement")
+@click.option("--table", type=int, help="In this table (counted from 1 in the document)")
+@click.option("--row", type=int, help="In this row of the table (counted from 1)")
+@click.option("--cell", type=int, help="In this cell of the row (counted from 1)")
+@click.option("--paragraph", help="In the one paragraph holding these words")
+def edit_cmd(input_docx: str, output_docx: str, replace, table, row, cell, paragraph) -> None:
+    """
+    Make a small correction (a value, a word) in one place of a Word document.
+
+    The text to replace must be there exactly once, in the one table cell or
+    paragraph named; every other part of the document is copied byte for byte.
+    Check the result with `docx2md diff`.
+
+    INPUT_DOCX: The document to correct
+
+    OUTPUT_DOCX: Where to write the corrected document (never the same file)
+    """
+    from docx2md.compare import edit
+
+    if Path(input_docx).resolve() == Path(output_docx).resolve():
+        console.print("[bold red]Error:[/bold red] write the corrected document to another file, then compare the two")
+        sys.exit(1)
+    try:
+        edit(input_docx, output_docx, replace[0], replace[1], table=table, row=row, cell=cell, paragraph=paragraph)
+    except ValueError as e:
+        console.print(f"[bold red]Not changed:[/bold red] {e}")
+        sys.exit(1)
+    console.print(f"« {replace[0]} » → « {replace[1]} »: {output_docx}")
+
+
 if __name__ == "__main__":
     main()

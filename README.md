@@ -97,6 +97,30 @@ This will:
 2. Install the package with all dependencies
 3. Run the batch conversion on files in ./files/input and output to ./files/output
 
+## Correcting a Word Document, and Proving the Correction
+
+When a book's original must change, two commands make the change exact and its proof readable.
+
+`docx2md edit` makes a small correction (a value, a word) in one place, and copies every other part
+of the document byte for byte. It refuses unless the text is there exactly once, in the table cell
+or the paragraph named:
+
+```bash
+docx2md edit book.docx book-corrected.docx --replace "10iπ" "20iπ" --table 1 --row 14 --cell 12
+docx2md edit book.docx book-corrected.docx --replace "teh" "the" --paragraph "the words around teh typo"
+```
+
+`docx2md diff` compares two Word documents passage by passage (a paragraph, or a table row with its
+cells) and lists every difference: where it is (the headings above it, the table and its caption,
+the row, the cell), the whole passage before and after, and, given the document's PDF, its page. A
+change of colour or style counts too, and so do the images and every other part of the file; what
+Word rewrites on every save does not. `--expect N` fails unless exactly N passages changed and no
+other part did; `-o` writes the report as Markdown, for a change log:
+
+```bash
+docx2md diff book.docx book-corrected.docx --pdf book.pdf --expect 1 -o change-0001.md
+```
+
 ## Verifying a Conversion
 
 `docx2md verify` reads the Word document's XML directly and compares it with the Markdown made from it, so a defect in the converter cannot hide itself:
