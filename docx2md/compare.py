@@ -430,22 +430,29 @@ def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cel
     raise ValueError('say where: a table, row and cell, or a paragraph')
 
 
-def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, **where) -> None:
+def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, nth: Optional[int] = None,
+         **where) -> None:
     """Replace `old` by `new` in one place of a Word document (`locate`'s table, row and cell, or
-    paragraph), where `old` must be inside exactly one piece of text, exactly once. Every other
-    part of the document is copied as it was, byte for byte."""
+    paragraph), where `old` must be inside one piece of text, exactly once, or `nth` says which of
+    its occurrences there (counted from 1, in reading order). Every other part of the document is
+    copied as it was, byte for byte."""
     with _zip(src) as z:
         infos = z.infolist()
         data = {i.filename: z.read(i.filename) for i in infos}
     xml = data[_DOCUMENT].decode('utf-8')
     start, end = locate(xml, **where)
     hits = [m for m in _TEXT_NODE.finditer(xml, start, end) if old in _unescape(m.group(2))]
-    count = sum(_unescape(m.group(2)).count(old) for m in hits)
-    if count != 1:
-        raise ValueError(f'« {old} » is there {count} times, not exactly once'
-                         + ('' if count else ' (a word split across two pieces of text cannot be replaced this way)'))
-    m = hits[0]
-    text = _escape(_unescape(m.group(2)).replace(old, new))
+    # Each occurrence: its piece of text and where it starts in it.
+    found = [(m, i.start()) for m in hits for i in re.finditer(re.escape(old), _unescape(m.group(2)))]
+    if nth is None and len(found) != 1:
+        raise ValueError(f'« {old} » is there {len(found)} times, not exactly once'
+                         + ('' if found else ' (a word split across two pieces of text cannot be replaced this way)')
+                         + (' (--nth says which)' if len(found) > 1 else ''))
+    if nth is not None and not 1 <= nth <= len(found):
+        raise ValueError(f'« {old} » is there {len(found)} times, so there is no occurrence {nth}')
+    m, at = found[(nth or 1) - 1]
+    plain = _unescape(m.group(2))
+    text = _escape(plain[:at] + new + plain[at + len(old):])
     # Word drops a text's spaces at its ends unless its tag keeps them.
     tag = m.group(1)
     if text != text.strip() and 'xml:space=' not in tag:

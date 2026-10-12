@@ -152,6 +152,20 @@ def test_a_paragraph_found_after_empty_ones_and_a_space_kept_before_maths():
     edit(old, io.BytesIO(), 'first polygons', 'first thirteen polygons', paragraph='vertices of the first')
 
 
+def test_edit_the_nth_of_several():
+    body = ('<w:p><w:r><w:t xml:space="preserve">Its order is equal to </w:t></w:r><m:oMath><m:r><m:t>2</m:t></m:r></m:oMath>'
+            '<w:r><w:t xml:space="preserve"> and its rank equal to</w:t></w:r><m:oMath><m:r><m:t>1</m:t></m:r></m:oMath></w:p>')
+    old = _docx(body + _body())
+    with pytest.raises(ValueError, match='2 times, not exactly once'):
+        edit(old, io.BytesIO(), ' equal to', ' equal to ', paragraph='Its order')
+    with pytest.raises(ValueError, match='no occurrence 3'):
+        edit(old, io.BytesIO(), ' equal to', ' equal to ', nth=3, paragraph='Its order')
+    out = io.BytesIO()
+    edit(old, out, ' equal to', ' equal to ', nth=2, paragraph='Its order')
+    [c] = compare(old, out.getvalue()).changes
+    assert c.after.startswith('Its order is equal to 2 and its rank equal to 1')
+
+
 def test_the_report_and_the_command():
     # Files named for this test beside it, removed when it ends.
     here = Path(__file__).parent
