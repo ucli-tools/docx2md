@@ -137,6 +137,21 @@ def test_edit_in_a_paragraph_named_by_its_words():
         locate(f'<w:document {_NS}><w:body>{_body()}</w:body></w:document>', paragraph='no such words')
 
 
+def test_a_paragraph_found_after_empty_ones_and_a_space_kept_before_maths():
+    # Word writes an empty paragraph as one tag; the paragraphs after it are still each their own.
+    body = ('<w:p w:rsidR="00AA0001"/>'
+            '<w:p><w:r><w:t>The order is equal to</w:t></w:r><m:oMath><m:r><m:t>1</m:t></m:r></m:oMath>'
+            '<w:r><w:t>.</w:t></w:r></w:p><w:p w:rsidR="00AA0002"/>' + _body())
+    old = _docx(body)
+    out = io.BytesIO()
+    edit(old, out, 'equal to', 'equal to ', paragraph='The order is')
+    [c] = compare(old, out.getvalue()).changes
+    assert c.before.startswith('The order is equal to1') and c.after.startswith('The order is equal to 1')
+    with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:
+        assert '<w:t xml:space="preserve">The order is equal to </w:t>' in z.read('word/document.xml').decode()
+    edit(old, io.BytesIO(), 'first polygons', 'first thirteen polygons', paragraph='vertices of the first')
+
+
 def test_the_report_and_the_command():
     # Files named for this test beside it, removed when it ends.
     here = Path(__file__).parent

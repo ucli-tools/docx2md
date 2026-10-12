@@ -387,9 +387,11 @@ def _escape(t: str) -> str:
 
 def _spans(xml: str, open_re: str, close: str, within: Tuple[int, int]) -> List[Tuple[int, int]]:
     """The spans of the elements opened by `open_re` and closed by `close` directly inside
-    `within`, nested ones of the same kind counted as part of their outer one."""
-    tokens = sorted([(m.start(), 1) for m in re.finditer(open_re, xml[within[0]:within[1]])] +
-                    [(m.start(), -1) for m in re.finditer(re.escape(close), xml[within[0]:within[1]])])
+    `within`, nested ones of the same kind counted as part of their outer one. An empty element
+    written as one tag (`<w:p w:rsidR="…"/>`) holds nothing and closes nothing: it is skipped."""
+    part = xml[within[0]:within[1]]
+    opens = [m.start() for m in re.finditer(open_re, part) if part[part.index('>', m.start()) - 1] != '/']
+    tokens = sorted([(o, 1) for o in opens] + [(m.start(), -1) for m in re.finditer(re.escape(close), part)])
     spans, depth, start = [], 0, 0
     for pos, step in tokens:
         if step == 1:
@@ -444,7 +446,11 @@ def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, **wh
                          + ('' if count else ' (a word split across two pieces of text cannot be replaced this way)'))
     m = hits[0]
     text = _escape(_unescape(m.group(2)).replace(old, new))
-    data[_DOCUMENT] = (xml[:m.start(2)] + text + xml[m.end(2):]).encode('utf-8')
+    # Word drops a text's spaces at its ends unless its tag keeps them.
+    tag = m.group(1)
+    if text != text.strip() and 'xml:space=' not in tag:
+        tag = tag[:-1] + ' xml:space="preserve">'
+    data[_DOCUMENT] = (xml[:m.start(1)] + tag + text + xml[m.end(2):]).encode('utf-8')
     with zipfile.ZipFile(dest, 'w') as out:
         for i in infos:
             out.writestr(i, data[i.filename], compress_type=i.compress_type)
