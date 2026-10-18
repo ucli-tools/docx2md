@@ -967,8 +967,11 @@ class TestConfigIntegration:
 
     def test_frontmatter_defaults_no_equation_numbers(self):
         """equation_numbers not in defaults — user enables via config/YAML."""
-        from docx2md.processors.frontmatter import _DEFAULT_MDTEXPDF
-        assert "equation_numbers" not in _DEFAULT_MDTEXPDF
+        from docx2md.processors.frontmatter import _build_yaml_template
+        out = _build_yaml_template("T", "S", "A", "a@example.com", "2026", 2026)
+        active = [l for l in out.splitlines() if l.startswith("equation_numbers")]
+        assert active == []
+        assert "# equation_numbers: true" in out
 
 
 class TestPipeTableBolding:

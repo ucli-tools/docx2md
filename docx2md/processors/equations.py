@@ -65,8 +65,8 @@ class EquationProcessor(BaseProcessor):
         """
         # Replace \(...\) with inline delimiters
         pattern = r'\\\((.*?)\\\)'
-        replacement = f'{self.inline_delimiters[0]}\\1{self.inline_delimiters[1]}'
-        content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+        start, end = self.inline_delimiters
+        content = re.sub(pattern, lambda m: f'{start}{m.group(1)}{end}', content, flags=re.DOTALL)
         
         return content
     
@@ -82,8 +82,8 @@ class EquationProcessor(BaseProcessor):
         """
         # Replace \[...\] with display delimiters
         pattern = r'\\\[(.*?)\\\]'
-        replacement = f'{self.display_delimiters[0]}\\1{self.display_delimiters[1]}'
-        content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+        start, end = self.display_delimiters
+        content = re.sub(pattern, lambda m: f'{start}{m.group(1)}{end}', content, flags=re.DOTALL)
         
         return content
 
@@ -119,17 +119,19 @@ def fix_delimiters(
     
     # Fix inline equations
     pattern_inline = r'\\\((.*?)\\\)'
-    replacement_inline = f'{inline_delimiters[0]}\\1{inline_delimiters[1]}'
-    content = re.sub(pattern_inline, replacement_inline, content, flags=re.DOTALL)
+    content = re.sub(pattern_inline, lambda m: f'{inline_delimiters[0]}{m.group(1)}{inline_delimiters[1]}', content, flags=re.DOTALL)
     
     # Fix display equations
     pattern_display = r'\\\[(.*?)\\\]'
-    replacement_display = f'{display_delimiters[0]}\\1{display_delimiters[1]}'
-    content = re.sub(pattern_display, replacement_display, content, flags=re.DOTALL)
+    content = re.sub(pattern_display, lambda m: f'{display_delimiters[0]}{m.group(1)}{display_delimiters[1]}', content, flags=re.DOTALL)
     
     # Count fixed occurrences
-    inline_fixed_count = len(re.findall(re.escape(inline_delimiters[0]) + r'(.*?)' + re.escape(inline_delimiters[1]), content, re.DOTALL))
-    display_fixed_count = len(re.findall(re.escape(display_delimiters[0]) + r'(.*?)' + re.escape(display_delimiters[1]), content, re.DOTALL))
+    # Display blocks first and removed before counting inline ones, because
+    # the default "$$" delimiters would otherwise also match as empty "$ $" pairs.
+    display_re = re.escape(display_delimiters[0]) + r'(.*?)' + re.escape(display_delimiters[1])
+    inline_re = re.escape(inline_delimiters[0]) + r'(.*?)' + re.escape(inline_delimiters[1])
+    display_fixed_count = len(re.findall(display_re, content, re.DOTALL))
+    inline_fixed_count = len(re.findall(inline_re, re.sub(display_re, '', content, flags=re.DOTALL), re.DOTALL))
     
     # Write the output file
     if not write_file(output_file, content):
@@ -187,12 +189,14 @@ def validate_equations(
         raise ValueError(f"Failed to read input file: {input_file}")
     
     # Find all inline equations
-    inline_pattern = r'\$(.*?)\$'
-    inline_equations = re.findall(inline_pattern, content, re.DOTALL)
-    
-    # Find all display equations
+    # Find all display equations first, then remove them so that "$$" is not
+    # also counted as inline "$ $" pairs.
     display_pattern = r'\$\$(.*?)\$\$'
     display_equations = re.findall(display_pattern, content, re.DOTALL)
+    without_display = re.sub(display_pattern, '', content, flags=re.DOTALL)
+
+    inline_pattern = r'\$(.*?)\$'
+    inline_equations = re.findall(inline_pattern, without_display, re.DOTALL)
     
     # Validate equations
     issues = []

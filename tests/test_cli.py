@@ -54,7 +54,7 @@ class TestCLI(unittest.TestCase):
         # Check that the version is displayed
         self.assertIn("docx2md, version", result.output)
     
-    @patch("docx2md.converter.convert_docx_to_markdown")
+    @patch("docx2md.cli.convert_docx_to_markdown")
     def test_convert_command(self, mock_convert):
         """Test the convert command."""
         # Create a dummy DOCX file
@@ -82,7 +82,7 @@ class TestCLI(unittest.TestCase):
         args, kwargs = mock_convert.call_args
         self.assertEqual(str(args[0]), str(input_file))
     
-    @patch("docx2md.converter.batch_convert")
+    @patch("docx2md.cli.batch_convert")
     def test_batch_command(self, mock_batch):
         """Test the batch command."""
         # Create a dummy input directory
@@ -112,7 +112,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(str(args[0]), str(input_dir))
         self.assertEqual(str(args[1]), str(output_dir))
     
-    @patch("docx2md.processors.equations.fix_delimiters")
+    @patch("docx2md.cli.fix_delimiters")
     def test_fix_delimiters_command(self, mock_fix):
         """Test the fix-delimiters command."""
         # Create a dummy Markdown file
