@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from docx2md.cli import main
-from docx2md.compare import compare, edit, locate
+from docx2md.compare import compare, edit, edit_superscript, locate
 
 _NS = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -164,6 +164,25 @@ def test_edit_the_nth_of_several():
     edit(old, out, ' equal to', ' equal to ', nth=2, paragraph='Its order')
     [c] = compare(old, out.getvalue()).changes
     assert c.after.startswith('Its order is equal to 2 and its rank equal to 1')
+
+
+def test_edit_an_equations_exponent():
+    def power(sup: str) -> str:
+        return ('<m:sSup><m:e><m:r><m:t>a</m:t></m:r></m:e><m:sup>' + sup + '</m:sup></m:sSup>')
+    half = '<m:f><m:num><m:r><w:rPr><w:sz w:val="18"/></w:rPr><m:t>3</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>'
+    body = ('<w:p><m:oMath><m:r><m:t>k=</m:t></m:r>' + power(half) + '<m:r><m:t>,#(9.9.9)</m:t></m:r>'
+            + power(half) + '</m:oMath></w:p>')
+    old = _docx(body + _body())
+    with pytest.raises(ValueError, match='2 times, not exactly once'):
+        edit_superscript(old, io.BytesIO(), '3/2', '3', paragraph='9.9.9')
+    with pytest.raises(ValueError, match='0 times'):
+        edit_superscript(old, io.BytesIO(), '5/2', '3', paragraph='9.9.9')
+    out = io.BytesIO()
+    edit_superscript(old, out, '3/2', '3', nth=1, paragraph='9.9.9')
+    [c] = compare(old, out.getvalue()).changes
+    assert c.before == 'k=a^(3/2),#(9.9.9)a^(3/2)' and c.after == 'k=a^3,#(9.9.9)a^(3/2)'
+    with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:
+        assert '<m:sup><m:r><w:rPr><w:sz w:val="18"/></w:rPr><m:t>3</m:t></m:r></m:sup>' in z.read('word/document.xml').decode()
 
 
 def test_the_report_and_the_command():

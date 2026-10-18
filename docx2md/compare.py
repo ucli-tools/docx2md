@@ -461,3 +461,41 @@ def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, nth:
     with zipfile.ZipFile(dest, 'w') as out:
         for i in infos:
             out.writestr(i, data[i.filename], compress_type=i.compress_type)
+
+
+_SUP = re.compile(r'<m:sup>((?:(?!<m:sup>|</m:sup>).)*)</m:sup>', re.S)
+_RUN = re.compile(r'<m:r[\s>].*?</m:r>', re.S)
+
+
+def edit_superscript(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str,
+                     nth: Optional[int] = None, **where) -> None:
+    """Replace, in one place of a Word document (`locate`'s), the exponent of an equation whose
+    reading is `old` (as `diff` shows it, e.g. 3/2) by the plain text `new`, in the formatting of
+    the exponent's first piece of text. The exponent must be there exactly once, or `nth` says
+    which (counted from 1, in reading order). Every other part is copied byte for byte."""
+    with _zip(src) as z:
+        infos = z.infolist()
+        data = {i.filename: z.read(i.filename) for i in infos}
+    xml = data[_DOCUMENT].decode('utf-8')
+    start, end = locate(xml, **where)
+    ns = f'xmlns:w="{_W[1:-1]}" xmlns:m="{_M[1:-1]}"'
+    found = []
+    for m in _SUP.finditer(xml, start, end):
+        root = ET.fromstring(f'<m:sup {ns}>{m.group(1)}</m:sup>')
+        run = _RUN.search(m.group(1))
+        if run and _math(root) == old:
+            found.append((m, run))
+    if nth is None and len(found) != 1:
+        raise ValueError(f'an exponent « {old} » is there {len(found)} times, not exactly once'
+                         + (' (--nth says which)' if len(found) > 1 else ''))
+    if nth is not None and not 1 <= nth <= len(found):
+        raise ValueError(f'an exponent « {old} » is there {len(found)} times, so there is no occurrence {nth}')
+    m, run = found[(nth or 1) - 1]
+    piece = _TEXT_NODE.search(run.group(0))
+    if piece is None:
+        raise ValueError('the exponent has no text to take the formatting from')
+    one = run.group(0)[:piece.start(2)] + _escape(new) + run.group(0)[piece.end(2):]
+    data[_DOCUMENT] = (xml[:m.start(1)] + one + xml[m.end(1):]).encode('utf-8')
+    with zipfile.ZipFile(dest, 'w') as out:
+        for i in infos:
+            out.writestr(i, data[i.filename], compress_type=i.compress_type)

@@ -329,13 +329,15 @@ def diff_cmd(old_docx: str, new_docx: str, pdf: Optional[str], output: Optional[
 @main.command("edit")
 @click.argument("input_docx", type=click.Path(exists=True, dir_okay=False))
 @click.argument("output_docx", type=click.Path(dir_okay=False))
-@click.option("--replace", nargs=2, required=True, metavar="OLD NEW", help="The text to replace, and its replacement")
+@click.option("--replace", nargs=2, metavar="OLD NEW", help="The text to replace, and its replacement")
+@click.option("--superscript", nargs=2, metavar="OLD NEW",
+              help="Instead: an equation's exponent, as diff shows it (3/2), and its replacement text (3)")
 @click.option("--table", type=int, help="In this table (counted from 1 in the document)")
 @click.option("--row", type=int, help="In this row of the table (counted from 1)")
 @click.option("--cell", type=int, help="In this cell of the row (counted from 1)")
 @click.option("--paragraph", help="In the one paragraph holding these words")
 @click.option("--nth", type=int, help="The text is there several times: replace this one (counted from 1, in reading order)")
-def edit_cmd(input_docx: str, output_docx: str, replace, table, row, cell, paragraph, nth) -> None:
+def edit_cmd(input_docx: str, output_docx: str, replace, superscript, table, row, cell, paragraph, nth) -> None:
     """
     Make a small correction (a value, a word) in one place of a Word document.
 
@@ -347,17 +349,22 @@ def edit_cmd(input_docx: str, output_docx: str, replace, table, row, cell, parag
 
     OUTPUT_DOCX: Where to write the corrected document (never the same file)
     """
-    from docx2md.compare import edit
+    from docx2md.compare import edit, edit_superscript
 
+    if bool(replace) == bool(superscript):
+        console.print("[bold red]Error:[/bold red] give --replace or --superscript, one of the two")
+        sys.exit(1)
     if Path(input_docx).resolve() == Path(output_docx).resolve():
         console.print("[bold red]Error:[/bold red] write the corrected document to another file, then compare the two")
         sys.exit(1)
     try:
-        edit(input_docx, output_docx, replace[0], replace[1], nth=nth, table=table, row=row, cell=cell, paragraph=paragraph)
+        what = replace or superscript
+        (edit if replace else edit_superscript)(input_docx, output_docx, what[0], what[1], nth=nth,
+                                                table=table, row=row, cell=cell, paragraph=paragraph)
     except ValueError as e:
         console.print(f"[bold red]Not changed:[/bold red] {e}")
         sys.exit(1)
-    console.print(f"« {replace[0]} » → « {replace[1]} »: {output_docx}")
+    console.print(f"« {what[0]} » → « {what[1]} »: {output_docx}")
 
 
 if __name__ == "__main__":
