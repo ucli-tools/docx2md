@@ -405,6 +405,16 @@ def _spans(xml: str, open_re: str, close: str, within: Tuple[int, int]) -> List[
     return spans
 
 
+def _span_text(xml: str, span: Tuple[int, int]) -> str:
+    return ''.join(_unescape(m.group(2)) for m in _TEXT_NODE.finditer(xml[span[0]:span[1]]))
+
+
+def _paragraphs_holding(xml: str, words: str) -> List[Tuple[int, int]]:
+    """Every paragraph whose text holds `words`, in document order (K is the position here, from 1)."""
+    body = (xml.index('<w:body>'), xml.index('</w:body>'))
+    return [s for s in _spans(xml, r'<w:p[\s>]', '</w:p>', body) if words in _span_text(xml, s)]
+
+
 def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cell: Optional[int] = None,
            paragraph: Optional[str] = None, paragraph_nth: Optional[int] = None) -> Tuple[int, int]:
     """The span, in the document's XML, of one table cell (its table, row and cell counted from 1)
@@ -426,8 +436,7 @@ def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cel
             raise ValueError(f'row {row} of table {table} has {len(cells)} cells, not {cell}')
         return cells[cell - 1]
     if paragraph:
-        found = [s for s in _spans(xml, r'<w:p[\s>]', '</w:p>', body)
-                 if paragraph in ''.join(_unescape(m.group(2)) for m in _TEXT_NODE.finditer(xml[s[0]:s[1]]))]
+        found = _paragraphs_holding(xml, paragraph)
         if paragraph_nth is not None:
             if not 1 <= paragraph_nth <= len(found):
                 raise ValueError(f'« {paragraph} » is in {len(found)} paragraphs, so there is no paragraph {paragraph_nth}')
@@ -445,18 +454,12 @@ def locate_all(src: Source, **where) -> List[Tuple[int, int, str]]:
     with _zip(src) as z:
         xml = z.read(_DOCUMENT).decode('utf-8')
 
-    def text(span: Tuple[int, int]) -> str:
-        return ''.join(_unescape(m.group(2)) for m in _TEXT_NODE.finditer(xml[span[0]:span[1]]))
     paragraph, nth = where.get('paragraph'), where.get('paragraph_nth')
     if where.get('table') is None and paragraph:
-        body = (xml.index('<w:body>'), xml.index('</w:body>'))
-        found = [s for s in _spans(xml, r'<w:p[\s>]', '</w:p>', body) if paragraph in text(s)]
-        return [(k, s[0], text(s)) for k, s in enumerate(found, 1) if nth is None or k == nth]
-    try:
-        span = locate(xml, **where)
-    except ValueError:
-        return []
-    return [(1, span[0], text(span))]
+        found = _paragraphs_holding(xml, paragraph)
+        return [(k, s[0], _span_text(xml, s)) for k, s in enumerate(found, 1) if nth is None or k == nth]
+    span = locate(xml, **where)  # real errors (no such table, nothing named, both given) raise ValueError
+    return [(1, span[0], _span_text(xml, span))]
 
 
 def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, nth: Optional[int] = None,

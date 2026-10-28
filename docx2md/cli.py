@@ -339,7 +339,7 @@ def locate_cmd(input_docx: str, table, row, cell, paragraph, paragraph_nth) -> N
 
     Prints each matching paragraph (or the table cell) in document order with its
     K (the number for --paragraph-nth), its offset in the document's XML and the start of its
-    text. Exits 0 if something matches, 1 if nothing does.
+    text. Exits 0 if something matches, 1 if nothing does, 2 on an error (no such table, nothing named).
 
     INPUT_DOCX: The Word document to look in
     """
@@ -349,7 +349,7 @@ def locate_cmd(input_docx: str, table, row, cell, paragraph, paragraph_nth) -> N
         hits = locate_all(input_docx, table=table, row=row, cell=cell, paragraph=paragraph, paragraph_nth=paragraph_nth)
     except ValueError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-        sys.exit(1)
+        sys.exit(2)
     if not hits:
         click.echo("No match.")
         sys.exit(1)

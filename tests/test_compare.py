@@ -280,6 +280,30 @@ def test_locate_lists_every_match_in_order_and_exits_by_result():
         f.unlink(missing_ok=True)
 
 
+def test_locate_reports_real_errors_apart_from_no_match():
+    here = Path(__file__).parent
+    f = here / 'test_compare_locate_err.docx'
+    runner = CliRunner()
+    try:
+        f.write_bytes(_docx(_body()))
+        for args in (['--table', '9', '--row', '1', '--cell', '1'], ['--table', '1', '--row', '1', '--cell', '1', '--paragraph-nth', '1'], []):
+            r = runner.invoke(main, ['locate', str(f), *args])
+            assert r.exit_code == 2 and 'No match' not in r.output, (args, r.output)
+        r = runner.invoke(main, ['locate', str(f), '--paragraph', 'absent words'])
+        assert r.exit_code == 1 and 'No match.' in r.output
+    finally:
+        f.unlink(missing_ok=True)
+
+
+def test_locate_all_and_locate_agree_on_k():
+    docx = _docx(_twins())
+    xml = _xml_of(docx)
+    hits = locate_all(docx, paragraph='Zorp')
+    assert len(hits) == 4
+    for k, offset, _ in hits:
+        assert locate(xml, paragraph='Zorp', paragraph_nth=k)[0] == offset
+
+
 def test_the_report_and_the_command():
     # Files named for this test beside it, removed when it ends.
     here = Path(__file__).parent
