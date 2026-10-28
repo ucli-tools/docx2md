@@ -326,6 +326,37 @@ def diff_cmd(old_docx: str, new_docx: str, pdf: Optional[str], output: Optional[
         sys.exit(1)
 
 
+@main.command("locate")
+@click.argument("input_docx", type=click.Path(exists=True, dir_okay=False))
+@click.option("--table", type=int, help="In this table (counted from 1 in the document)")
+@click.option("--row", type=int, help="In this row of the table (counted from 1)")
+@click.option("--cell", type=int, help="In this cell of the row (counted from 1)")
+@click.option("--paragraph", help="Every paragraph holding these words")
+@click.option("--paragraph-nth", "paragraph_nth", type=int, help="Only this one (counted from 1, in document order)")
+def locate_cmd(input_docx: str, table, row, cell, paragraph, paragraph_nth) -> None:
+    """
+    Show where `docx2md edit` would work, without changing anything.
+
+    Prints each matching paragraph (or the table cell) in document order with its
+    K (the number for --paragraph-nth), its offset in the document's XML and the start of its
+    text. Exits 0 if something matches, 1 if nothing does.
+
+    INPUT_DOCX: The Word document to look in
+    """
+    from docx2md.compare import locate_all
+
+    try:
+        hits = locate_all(input_docx, table=table, row=row, cell=cell, paragraph=paragraph, paragraph_nth=paragraph_nth)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(1)
+    if not hits:
+        click.echo("No match.")
+        sys.exit(1)
+    for k, offset, text in hits:
+        click.echo(f"K={k}  offset={offset}  {text[:80]}" + ("…" if len(text) > 80 else ""))
+
+
 @main.command("edit")
 @click.argument("input_docx", type=click.Path(exists=True, dir_okay=False))
 @click.argument("output_docx", type=click.Path(dir_okay=False))

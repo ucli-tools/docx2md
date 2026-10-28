@@ -112,7 +112,14 @@ docx2md edit book.docx book-corrected.docx --replace "teh" "the" --paragraph "th
 
 If several paragraphs hold the `--paragraph` words (identical paragraphs), `edit` refuses; add
 `--paragraph-nth K` (counted from 1, in document order) to use the K-th one. `--nth` still counts
-the occurrences of the text inside that paragraph:
+the occurrences of the text inside that paragraph.
+
+K counts every paragraph that contains the `--paragraph` words, not only identical ones (a table
+of contents entry, a caption or a text box holding them counts too). Run `docx2md locate book.docx --paragraph "the words"` first
+(it changes nothing; it prints each matching paragraph with its K, its offset and the start of its text,
+and exits 1 if nothing matches) to see exactly which paragraphs match and in which order, and
+choose `--paragraph` words that the correction does not change, so K stays the same if you edit
+the same paragraphs one after another. `--paragraph-nth` cannot be combined with `--table`.
 
 ```bash
 docx2md edit book.docx book-corrected.docx --replace "teh" "the" --paragraph "the words around teh typo" --paragraph-nth 2

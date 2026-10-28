@@ -411,6 +411,9 @@ def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cel
     or of the one paragraph whose words hold `paragraph`, or, if several do, the `paragraph_nth`-th
     of them (counted from 1, in document order)."""
     body = (xml.index('<w:body>'), xml.index('</w:body>'))
+    if table is not None and paragraph_nth is not None:
+        raise ValueError('--paragraph-nth goes with --paragraph, not with --table: '
+                         'name a table, row and cell, or a paragraph, not both')
     if table is not None:
         tables = _spans(xml, r'<w:tbl>', '</w:tbl>', body)
         if not 1 <= table <= len(tables):
@@ -433,6 +436,27 @@ def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cel
             raise ValueError(f'« {paragraph} » is in {len(found)} paragraphs, not exactly one')
         return found[0]
     raise ValueError('say where: a table, row and cell, or a paragraph')
+
+
+def locate_all(src: Source, **where) -> List[Tuple[int, int, str]]:
+    """What `edit` would work on: for a table cell, that one place; for `paragraph` words, every
+    paragraph holding them, or only the `paragraph_nth`-th. Each as (K counted from 1 in document
+    order, its offset in the document's XML, its text). Empty if nothing matches."""
+    with _zip(src) as z:
+        xml = z.read(_DOCUMENT).decode('utf-8')
+
+    def text(span: Tuple[int, int]) -> str:
+        return ''.join(_unescape(m.group(2)) for m in _TEXT_NODE.finditer(xml[span[0]:span[1]]))
+    paragraph, nth = where.get('paragraph'), where.get('paragraph_nth')
+    if where.get('table') is None and paragraph:
+        body = (xml.index('<w:body>'), xml.index('</w:body>'))
+        found = [s for s in _spans(xml, r'<w:p[\s>]', '</w:p>', body) if paragraph in text(s)]
+        return [(k, s[0], text(s)) for k, s in enumerate(found, 1) if nth is None or k == nth]
+    try:
+        span = locate(xml, **where)
+    except ValueError:
+        return []
+    return [(1, span[0], text(span))]
 
 
 def edit(src: Source, dest: Union[str, Path, BinaryIO], old: str, new: str, nth: Optional[int] = None,

@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from docx2md.cli import main
-from docx2md.compare import compare, edit, edit_superscript, locate
+from docx2md.compare import compare, edit, edit_superscript, locate, locate_all
 
 _NS = (
     'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -199,6 +199,85 @@ def test_edit_an_equations_exponent():
     assert c.before == 'k=a^(3/2),#(9.9.9)a^(3/2)' and c.after == 'k=a^3,#(9.9.9)a^(3/2)'
     with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:
         assert '<m:sup><m:r><w:rPr><w:sz w:val="18"/></w:rPr><m:t>3</m:t></m:r></m:sup>' in z.read('word/document.xml').decode()
+
+
+def test_paragraph_nth_with_a_table_is_refused():
+    old = _docx(_body())
+    with pytest.raises(ValueError, match='not with --table'):
+        edit(old, io.BytesIO(), 'n', 'm', table=1, row=1, cell=1, paragraph_nth=1)
+
+
+def _twins():
+    """Four paragraphs holding 'Zorp', in document order: in the body, in a table cell, in a
+    text box inside another paragraph, and one that is an OMML m:oMathPara."""
+    return (
+        '<w:p><w:r><w:t>Zorp teh one.</w:t></w:r></w:p>'
+        '<w:tbl><w:tblPr/><w:tr>' + _cell('<w:r><w:t>Zorp teh two.</w:t></w:r>') + '</w:tr></w:tbl>'
+        '<w:p><w:r><w:t>Host.</w:t></w:r><w:r><mc:AlternateContent><mc:Choice><w:drawing><w:txbxContent>'
+        '<w:p><w:r><w:t>Zorp teh three.</w:t></w:r></w:p></w:txbxContent></w:drawing></mc:Choice></mc:AlternateContent></w:r></w:p>'
+        '<w:p><m:oMathPara><m:oMath><m:r><m:t>Zorp teh four.</m:t></m:r></m:oMath></m:oMathPara></w:p>')
+
+
+def _xml_of(docx: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(docx)) as z:
+        return z.read('word/document.xml').decode()
+
+
+def test_paragraph_nth_counts_in_document_order_across_cell_text_box_and_maths():
+    old = _docx(_twins())
+    assert [locate(_xml_of(old), paragraph='Zorp', paragraph_nth=k)[0] for k in (1, 2, 3, 4)] == sorted(
+        locate(_xml_of(old), paragraph='Zorp', paragraph_nth=k)[0] for k in (1, 2, 3, 4))
+    for k, word in enumerate(('one', 'two', 'three', 'four'), 1):
+        out = io.BytesIO()
+        edit(old, out, 'teh', 'the', paragraph='Zorp', paragraph_nth=k)
+        xml = _xml_of(out.getvalue())
+        assert xml.count('Zorp the ') == 1 and xml.count('Zorp teh ') == 3
+        assert f'Zorp the {word}.' in xml
+    with pytest.raises(ValueError, match='is in 4 paragraphs'):
+        edit(old, io.BytesIO(), 'teh', 'the', paragraph='Zorp')
+
+
+def test_nth_counts_inside_the_chosen_paragraph_only():
+    twin = '<w:p><w:r><w:t>Zorp a a</w:t></w:r><w:r><w:t>a</w:t></w:r></w:p>'
+    old = _docx(twin + twin)
+    out = io.BytesIO()
+    edit(old, out, 'a', 'b', paragraph='Zorp', paragraph_nth=2, nth=3)
+    xml = _xml_of(out.getvalue())
+    first, second = xml.split('</w:p>')[:2]
+    assert first.count('<w:t>a</w:t>') == 1 and 'b' not in first.replace('<w:body>', '')
+    assert second.count('<w:t>a</w:t>') == 0 and second.count('<w:t>b</w:t>') == 1 and 'Zorp a a' in second
+
+
+def test_edit_superscript_in_the_nth_paragraph():
+    def power(sup: str) -> str:
+        return '<m:sSup><m:e><m:r><m:t>a</m:t></m:r></m:e><m:sup><m:r><m:t>' + sup + '</m:t></m:r></m:sup></m:sSup>'
+    twin = '<w:p><m:oMath><m:r><m:t>Zorp=</m:t></m:r>' + power('2') + '</m:oMath></w:p>'
+    old = _docx(twin + twin)
+    with pytest.raises(ValueError, match='2 paragraphs, not exactly one'):
+        edit_superscript(old, io.BytesIO(), '2', '3', paragraph='Zorp')
+    out = io.BytesIO()
+    edit_superscript(old, out, '2', '3', paragraph='Zorp', paragraph_nth=2)
+    xml = _xml_of(out.getvalue())
+    assert xml.count('<m:t>2</m:t>') == 1 and xml.count('<m:t>3</m:t>') == 1
+    assert xml.index('<m:t>2</m:t>') < xml.index('<m:t>3</m:t>')
+
+
+def test_locate_lists_every_match_in_order_and_exits_by_result():
+    here = Path(__file__).parent
+    f = here / 'test_compare_locate.docx'
+    runner = CliRunner()
+    try:
+        f.write_bytes(_docx(_twins()))
+        hits = locate_all(f, paragraph='Zorp')
+        assert [h[0] for h in hits] == [1, 2, 3, 4]
+        assert [h[1] for h in hits] == sorted(h[1] for h in hits)
+        assert [h[0] for h in locate_all(f, paragraph='Zorp', paragraph_nth=2)] == [2]
+        r = runner.invoke(main, ['locate', str(f), '--paragraph', 'Zorp'])
+        assert r.exit_code == 0 and r.output.count('K=') == 4 and 'Zorp teh one.' in r.output
+        assert runner.invoke(main, ['locate', str(f), '--paragraph', 'Zorp', '--paragraph-nth', '3']).output.count('K=') == 1
+        assert runner.invoke(main, ['locate', str(f), '--paragraph', 'Nothing here']).exit_code == 1
+    finally:
+        f.unlink(missing_ok=True)
 
 
 def test_the_report_and_the_command():
