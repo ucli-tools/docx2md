@@ -152,6 +152,22 @@ def test_a_paragraph_found_after_empty_ones_and_a_space_kept_before_maths():
     edit(old, io.BytesIO(), 'first polygons', 'first thirteen polygons', paragraph='vertices of the first')
 
 
+def test_edit_the_nth_of_several_identical_paragraphs():
+    twin = '<w:p><w:r><w:t>Zorp teh quill sits here.</w:t></w:r></w:p>'
+    old = _docx(twin + '<w:p><w:r><w:t>Between.</w:t></w:r></w:p>' + twin)
+    with pytest.raises(ValueError, match='2 paragraphs, not exactly one'):
+        edit(old, io.BytesIO(), 'teh', 'the', paragraph='Zorp')
+    out = io.BytesIO()
+    edit(old, out, 'teh', 'the', paragraph='Zorp', paragraph_nth=2)
+    with zipfile.ZipFile(io.BytesIO(out.getvalue())) as z:
+        xml = z.read('word/document.xml').decode()
+    assert xml.count('Zorp teh quill') == 1 and xml.count('Zorp the quill') == 1
+    assert xml.index('Zorp teh quill') < xml.index('Zorp the quill')
+    for bad in (0, 3):
+        with pytest.raises(ValueError, match=f'no paragraph {bad}'):
+            edit(old, io.BytesIO(), 'teh', 'the', paragraph='Zorp', paragraph_nth=bad)
+
+
 def test_edit_the_nth_of_several():
     body = ('<w:p><w:r><w:t xml:space="preserve">Its order is equal to </w:t></w:r><m:oMath><m:r><m:t>2</m:t></m:r></m:oMath>'
             '<w:r><w:t xml:space="preserve"> and its rank equal to</w:t></w:r><m:oMath><m:r><m:t>1</m:t></m:r></m:oMath></w:p>')

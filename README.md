@@ -110,6 +110,14 @@ docx2md edit book.docx book-corrected.docx --replace "10iπ" "20iπ" --table 1 -
 docx2md edit book.docx book-corrected.docx --replace "teh" "the" --paragraph "the words around teh typo"
 ```
 
+If several paragraphs hold the `--paragraph` words (identical paragraphs), `edit` refuses; add
+`--paragraph-nth K` (counted from 1, in document order) to use the K-th one. `--nth` still counts
+the occurrences of the text inside that paragraph:
+
+```bash
+docx2md edit book.docx book-corrected.docx --replace "teh" "the" --paragraph "the words around teh typo" --paragraph-nth 2
+```
+
 `docx2md diff` compares two Word documents passage by passage (a paragraph, or a table row with its
 cells) and lists every difference: where it is (the headings above it, the table and its caption,
 the row, the cell), the whole passage before and after, and, given the document's PDF, its page. A

@@ -336,13 +336,16 @@ def diff_cmd(old_docx: str, new_docx: str, pdf: Optional[str], output: Optional[
 @click.option("--row", type=int, help="In this row of the table (counted from 1)")
 @click.option("--cell", type=int, help="In this cell of the row (counted from 1)")
 @click.option("--paragraph", help="In the one paragraph holding these words")
+@click.option("--paragraph-nth", "paragraph_nth", type=int,
+              help="Several paragraphs hold the --paragraph words: use this one (counted from 1, in document order)")
 @click.option("--nth", type=int, help="The text is there several times: replace this one (counted from 1, in reading order)")
-def edit_cmd(input_docx: str, output_docx: str, replace, superscript, table, row, cell, paragraph, nth) -> None:
+def edit_cmd(input_docx: str, output_docx: str, replace, superscript, table, row, cell, paragraph, paragraph_nth, nth) -> None:
     """
     Make a small correction (a value, a word) in one place of a Word document.
 
     The text to replace must be there exactly once, in the one table cell or
-    paragraph named, or --nth says which; every other part of the document is
+    paragraph named (--paragraph-nth picks one of several paragraphs
+    holding the --paragraph words), or --nth says which; every other part of the document is
     copied byte for byte. Check the result with `docx2md diff`.
 
     INPUT_DOCX: The document to correct
@@ -360,7 +363,7 @@ def edit_cmd(input_docx: str, output_docx: str, replace, superscript, table, row
     try:
         what = replace or superscript
         (edit if replace else edit_superscript)(input_docx, output_docx, what[0], what[1], nth=nth,
-                                                table=table, row=row, cell=cell, paragraph=paragraph)
+                                                table=table, row=row, cell=cell, paragraph=paragraph, paragraph_nth=paragraph_nth)
     except ValueError as e:
         console.print(f"[bold red]Not changed:[/bold red] {e}")
         sys.exit(1)

@@ -406,9 +406,10 @@ def _spans(xml: str, open_re: str, close: str, within: Tuple[int, int]) -> List[
 
 
 def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cell: Optional[int] = None,
-           paragraph: Optional[str] = None) -> Tuple[int, int]:
+           paragraph: Optional[str] = None, paragraph_nth: Optional[int] = None) -> Tuple[int, int]:
     """The span, in the document's XML, of one table cell (its table, row and cell counted from 1)
-    or of the one paragraph whose words hold `paragraph`."""
+    or of the one paragraph whose words hold `paragraph`, or, if several do, the `paragraph_nth`-th
+    of them (counted from 1, in document order)."""
     body = (xml.index('<w:body>'), xml.index('</w:body>'))
     if table is not None:
         tables = _spans(xml, r'<w:tbl>', '</w:tbl>', body)
@@ -424,6 +425,10 @@ def locate(xml: str, table: Optional[int] = None, row: Optional[int] = None, cel
     if paragraph:
         found = [s for s in _spans(xml, r'<w:p[\s>]', '</w:p>', body)
                  if paragraph in ''.join(_unescape(m.group(2)) for m in _TEXT_NODE.finditer(xml[s[0]:s[1]]))]
+        if paragraph_nth is not None:
+            if not 1 <= paragraph_nth <= len(found):
+                raise ValueError(f'« {paragraph} » is in {len(found)} paragraphs, so there is no paragraph {paragraph_nth}')
+            return found[paragraph_nth - 1]
         if len(found) != 1:
             raise ValueError(f'« {paragraph} » is in {len(found)} paragraphs, not exactly one')
         return found[0]
